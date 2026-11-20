@@ -1,0 +1,201 @@
+[
+  {
+    "id": "D01",
+    "title": "Label files are 0-based: imgNNNNNN.txt is frame N+1",
+    "count": 36000,
+    "per_camera": {
+      "cam01": 9000,
+      "cam02": 9000,
+      "cam03": 9000,
+      "cam04": 9000
+    },
+    "fix_applied": "frame = N + 1 when reading labels_GT"
+  },
+  {
+    "id": "D02",
+    "title": "Box formats differ: labels and SCT_GT are x1 y1 x2 y2, Multi_CAM is x y w h",
+    "count": 807526,
+    "per_camera": {
+      "cam01": 230072,
+      "cam02": 209838,
+      "cam03": 219548,
+      "cam04": 148068
+    },
+    "fix_applied": "labels_GT and SCT_GT converted to x, y, w, h; Multi_CAM matched to SCT in x1 y1 x2 y2"
+  },
+  {
+    "id": "D03",
+    "title": "labels_GT folder inside the zip differs per camera (cam01: labels_filtered; cam02: labels_filtered; cam03: labels_corrected; cam04: labels_corrected)",
+    "count": 2,
+    "per_camera": {
+      "cam01": 0,
+      "cam02": 0,
+      "cam03": 1,
+      "cam04": 1
+    },
+    "fix_applied": "prepare reads img*.txt from whichever folder the zip has"
+  },
+  {
+    "id": "D04",
+    "title": "Parked vehicles are only in the detection labels (labels_GT boxes with no SCT box at IoU >= 0.5)",
+    "count": 349542,
+    "per_camera": {
+      "cam01": 110409,
+      "cam02": 102396,
+      "cam03": 101209,
+      "cam04": 35528
+    },
+    "fix_applied": "kept in gt detections; tracking scoring ignores parked tracks (src/data/parked.py: track spans >= 150 frames and its box centre moves < 30 px)"
+  },
+  {
+    "id": "D05",
+    "title": "SCT labels every vehicle as class 2 (SCT boxes that labels_GT calls truck, bus or motorcycle)",
+    "count": 39032,
+    "per_camera": {
+      "cam01": 10360,
+      "cam02": 9780,
+      "cam03": 10682,
+      "cam04": 8210
+    },
+    "fix_applied": "gt tracks keep cls 2; detection scoring is class-agnostic"
+  },
+  {
+    "id": "D06",
+    "title": "ID switch: cam01 track 223 is two vehicles in Multi_CAM",
+    "count": 114,
+    "per_camera": {
+      "cam01": 114,
+      "cam02": 0,
+      "cam03": 0,
+      "cam04": 0
+    },
+    "fix_applied": "split at frame 4075: frames >= 4075 became track 518 (Multi_CAM 554 before, 553 after)"
+  },
+  {
+    "id": "D07",
+    "title": "ID switch: cam03 track 86 is two vehicles in Multi_CAM",
+    "count": 199,
+    "per_camera": {
+      "cam01": 0,
+      "cam02": 0,
+      "cam03": 199,
+      "cam04": 0
+    },
+    "fix_applied": "split at frame 1288: frames >= 1288 became track 526 (Multi_CAM 643 before, 644 after)"
+  },
+  {
+    "id": "D08",
+    "title": "SCT tracks with no multi-camera id",
+    "count": 208,
+    "per_camera": {
+      "cam01": 83,
+      "cam02": 23,
+      "cam03": 34,
+      "cam04": 68
+    },
+    "fix_applied": "own global id = camera number x 10000 + track_id"
+  },
+  {
+    "id": "D09",
+    "title": "Duplicate (frame, track_id) rows in SCT_GT",
+    "count": 26,
+    "per_camera": {
+      "cam01": 2,
+      "cam02": 0,
+      "cam03": 10,
+      "cam04": 14
+    },
+    "fix_applied": "kept the first row, dropped the rest: cam01 track 214: 2 rows, frames 3823-3824; cam03 track 431: 10 rows, frames 7635-7644; cam04 track 105: 8 rows, frames 2536-2543; cam04 track 314: 6 rows, frames 8152, 8157-8161"
+  },
+  {
+    "id": "D10",
+    "title": "Boxes outside the 3840x2160 frame",
+    "count": 748,
+    "per_camera": {
+      "cam01": 8,
+      "cam02": 0,
+      "cam03": 740,
+      "cam04": 0
+    },
+    "fix_applied": "clipped to the frame"
+  },
+  {
+    "id": "D11",
+    "title": "Frames with no tracking ground truth",
+    "count": 132,
+    "per_camera": {
+      "cam01": 0,
+      "cam02": 1,
+      "cam03": 0,
+      "cam04": 131
+    },
+    "fix_applied": "left empty (cam02: 2946; cam04: 4099-4229); SCT rows whose frame has no labels_GT file: 0"
+  },
+  {
+    "id": "D12",
+    "title": "Multi_CAM rows with no SCT box",
+    "count": 52,
+    "per_camera": {
+      "cam01": 0,
+      "cam02": 52,
+      "cam03": 0,
+      "cam04": 0
+    },
+    "fix_applied": "skipped: cam02 Multi_CAM id 431: frames 1-52"
+  },
+  {
+    "id": "D16",
+    "title": "README names differ from the files",
+    "count": 6,
+    "per_camera": {},
+    "fix_applied": "README 'Multi_CAM_Ground_Truth.txt' is 'Multi_CAM_Ground_Turth.txt' on disk; README 'vehicle_statistic.xlsx' is 'Vehicle_statistic.xlsx' on disk; README 'ReID_subset/ (ReID_subset.zip)' is 'RoundaboutHD_Reid_subset/' on disk; README 'SCT/imagesc001_SCT_GT.txt' is 'SCT/SCT_GT.txt' on disk; README 'geo-mapping/cam01_undistorted.png' is 'geo-mapping/cam01.yaml' on disk; README ReID names '{track_id:06d}_{cam_id}_{frame_id}.jpg' are '{id:04d}_cam0X_{frame:06d}.jpg' with a 0-based frame; code and contract use the real names"
+  },
+  {
+    "id": "D17",
+    "title": "labels_test boxes not in SCT_GT (no SCT box within 1.0 px in the same frame)",
+    "count": 2049,
+    "per_camera": {
+      "cam01": 1884,
+      "cam02": 64,
+      "cam03": 56,
+      "cam04": 45
+    },
+    "fix_applied": "left open: labels_test is not used by the pipeline"
+  },
+  {
+    "id": "D18",
+    "title": "Multi_CAM world coordinates are all -1 (unknown)",
+    "count": 177782,
+    "per_camera": {
+      "cam01": 35821,
+      "cam02": 49882,
+      "cam03": 52621,
+      "cam04": 39458
+    },
+    "fix_applied": "left open: world coordinates are not used"
+  },
+  {
+    "id": "D19",
+    "title": "labels_test.zip is missing label files",
+    "count": 130,
+    "per_camera": {
+      "cam01": 0,
+      "cam02": 0,
+      "cam03": 0,
+      "cam04": 130
+    },
+    "fix_applied": "left open: labels_test is not used by the pipeline"
+  },
+  {
+    "id": "D20",
+    "title": "One global id on two tracks of a camera in the same frame (rows)",
+    "count": 174,
+    "per_camera": {
+      "cam01": 174,
+      "cam02": 0,
+      "cam03": 0,
+      "cam04": 0
+    },
+    "fix_applied": "left open, needs a team decision: cam01 global id 553: tracks [225, 518], frames 4075-4161"
+  }
+]

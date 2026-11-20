@@ -1,0 +1,46 @@
+# Shared settings for every stage. Each stage edits only its own section.
+# Swap a model by changing its `class` ("package.module:ClassName") and `args`.
+
+raw_dir: data/raw/RoundaboutHD
+cameras: [cam01, cam02, cam03, cam04]
+seed: 42
+
+prepare:
+  frame_width: 3840
+  frame_height: 2160
+  n_frames: 9000
+  match_iou: 0.5               # a Multi_CAM or labels_GT box belongs to an SCT box at IoU >= this
+  class_iou: 0.7               # labels_GT box used to look up an SCT box's real class (issue D05)
+  same_box_px: 1.0             # labels_test box equals an SCT box if all corners are within this (D17)
+  single_cam_id_offset: 10000  # tracks with no Multi_CAM id: global_id = camera number * offset + track_id
+
+detection:
+  run: baseline            # outputs/detections/<run>/
+  model:
+    class: null            # e.g. src.detection.yolov9:YOLOv9Detector
+    args: {}
+
+tracking:
+  run: baseline            # outputs/tracks/<run>/
+  input: gt                # detection run to track; "gt" = annotated boxes
+  model:
+    class: null            # e.g. src.tracking.bytetrack:ByteTracker
+    args: {}
+
+reid:
+  run: baseline            # outputs/reid/<run>/
+  input: gt                # tracking run to embed; "gt" = annotated tracks
+  model:
+    class: null            # e.g. src.reid.osnet:OSNet
+    args: {}
+
+matching:
+  run: baseline            # outputs/matching/<run>/
+  input: gt                # tracking + reid run to match
+  model:
+    class: null            # e.g. src.matching.appearance_time:AppearanceTimeMatcher
+    args: {}
+
+od:
+  run: baseline            # outputs/od/<run>/
+  input: gt                # matching run to count; "gt" = annotated cross-camera IDs

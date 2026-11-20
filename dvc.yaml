@@ -1,29 +1,31 @@
 stages:
-  train:
-    cmd: python src/models/train_model.py
+  prepare:
+    cmd: python -m src.data.prepare
     deps:
-      - data/processed
-      - src/models/train_model.py
+      - src/data
+      - src/common/io.py
+      - src/common/config.py
+      - data/raw/RoundaboutHD/imagesc001/detection/labels_GT.zip
+      - data/raw/RoundaboutHD/imagesc002/detection/labels_GT.zip
+      - data/raw/RoundaboutHD/imagesc003/detection/labels_GT.zip
+      - data/raw/RoundaboutHD/imagesc004/detection/labels_GT.zip
+      - data/raw/RoundaboutHD/imagesc001/detection/labels_test.zip
+      - data/raw/RoundaboutHD/imagesc002/detection/labels_test.zip
+      - data/raw/RoundaboutHD/imagesc003/detection/labels_test.zip
+      - data/raw/RoundaboutHD/imagesc004/detection/labels_test.zip
+      - data/raw/RoundaboutHD/imagesc001/SCT/SCT_GT.txt
+      - data/raw/RoundaboutHD/imagesc002/SCT/SCT_GT.txt
+      - data/raw/RoundaboutHD/imagesc003/SCT/SCT_GT.txt
+      - data/raw/RoundaboutHD/imagesc004/SCT/SCT_GT.txt
+      - data/raw/RoundaboutHD/Multi_CAM_Ground_Turth.txt
+    params:
+      - prepare
+      - raw_dir
+      - cameras
     outs:
-      - models:
-          persist: true
+      - outputs/detections/gt
+      - outputs/tracks/gt
+      - outputs/matching/gt
     metrics:
-      - reports/training_metrics.txt:
+      - reports/data_quality.json:
           cache: false
-  eval:
-    cmd: python src/models/predict_model.py
-    deps:
-      - data/processed
-      - models
-      - src/models/predict_model.py
-    metrics:
-      - reports/metrics.txt:
-          cache: false
-  process_data:
-    cmd: python src/data/make_dataset.py
-    deps:
-      - data/raw
-      - src/data/make_dataset.py
-    outs:
-      - data/processed:
-          persist: true

@@ -1,0 +1,106 @@
+schema: '2.0'
+stages:
+  prepare:
+    cmd: python -m src.data.prepare
+    deps:
+    - path: data/raw/RoundaboutHD/Multi_CAM_Ground_Turth.txt
+      hash: md5
+      md5: 8ddf14af0bdbd53f440b7c0da2129302
+      size: 7919701
+    - path: data/raw/RoundaboutHD/imagesc001/SCT/SCT_GT.txt
+      hash: md5
+      md5: a26a4d02597ece92f4883e5f0e983ddb
+      size: 2487374
+    - path: data/raw/RoundaboutHD/imagesc001/detection/labels_GT.zip
+      hash: md5
+      md5: d711a8913298f56a0124e076b274c43a
+      size: 3928655
+    - path: data/raw/RoundaboutHD/imagesc001/detection/labels_test.zip
+      hash: md5
+      md5: 61b9115c0df0a5df5ad4b6f5e0585d73
+      size: 3030669
+    - path: data/raw/RoundaboutHD/imagesc002/SCT/SCT_GT.txt
+      hash: md5
+      md5: f08b73406d4759838e248865f67d1213
+      size: 2210923
+    - path: data/raw/RoundaboutHD/imagesc002/detection/labels_GT.zip
+      hash: md5
+      md5: 6b0abf1980b065cf1bed9748de9f4bb5
+      size: 3831373
+    - path: data/raw/RoundaboutHD/imagesc002/detection/labels_test.zip
+      hash: md5
+      md5: 98f3eadcd299129aee9896a68db3d56c
+      size: 2942242
+    - path: data/raw/RoundaboutHD/imagesc003/SCT/SCT_GT.txt
+      hash: md5
+      md5: 1c8d2e6852610a77f8371bd567acad91
+      size: 2395737
+    - path: data/raw/RoundaboutHD/imagesc003/detection/labels_GT.zip
+      hash: md5
+      md5: 312165b1c7d63ce239b11e73da1a02c0
+      size: 4194103
+    - path: data/raw/RoundaboutHD/imagesc003/detection/labels_test.zip
+      hash: md5
+      md5: 225bf740f09d42070e24f06bb58c30c2
+      size: 3005651
+    - path: data/raw/RoundaboutHD/imagesc004/SCT/SCT_GT.txt
+      hash: md5
+      md5: 013c1ab1844c04aa5331ada2e64ad988
+      size: 2301885
+    - path: data/raw/RoundaboutHD/imagesc004/detection/labels_GT.zip
+      hash: md5
+      md5: 9088bedb7831ee4be6ad135920162b7e
+      size: 3330295
+    - path: data/raw/RoundaboutHD/imagesc004/detection/labels_test.zip
+      hash: md5
+      md5: 4fe9fc6e43721c7b41837c8a930d73b5
+      size: 2931397
+    - path: src/common/config.py
+      hash: md5
+      md5: bee3de04b273acda0c1b33edbaf34c7c
+      size: 805
+    - path: src/common/io.py
+      hash: md5
+      md5: fca467b93c278ce51ff1443866810331
+      size: 1414
+    - path: src/data
+      hash: md5
+      md5: abb9c06a1cb4cf72b58541301bf4c583.dir
+      size: 66356
+      nfiles: 11
+    params:
+      params.yaml:
+        cameras:
+        - cam01
+        - cam02
+        - cam03
+        - cam04
+        prepare:
+          frame_width: 3840
+          frame_height: 2160
+          n_frames: 9000
+          match_iou: 0.5
+          class_iou: 0.7
+          same_box_px: 1.0
+          single_cam_id_offset: 10000
+        raw_dir: data/raw/RoundaboutHD
+    outs:
+    - path: outputs/detections/gt
+      hash: md5
+      md5: a5b75a9061ec89c5e06ceb652f371b29.dir
+      size: 20302066
+      nfiles: 4
+    - path: outputs/matching/gt
+      hash: md5
+      md5: 170d3862d5920ae0f1be8d8365c0b1ee.dir
+      size: 15804
+      nfiles: 1
+    - path: outputs/tracks/gt
+      hash: md5
+      md5: 5af00a23254fa2a2db6f9b5af9080e56.dir
+      size: 9988346
+      nfiles: 4
+    - path: reports/data_quality.json
+      hash: md5
+      md5: 752d0356e5b39fc694c2543674d7ccc3
+      size: 6044
