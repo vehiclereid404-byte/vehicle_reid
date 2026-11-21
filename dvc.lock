@@ -1,0 +1,54 @@
+schema: '2.0'
+stages:
+  process_data:
+    cmd: python -m src.data.make_dataset
+    deps:
+    - path: data/raw/RoundaboutHD/Multi_CAM_Ground_Turth.txt
+      hash: md5
+      md5: 8ddf14af0bdbd53f440b7c0da2129302
+      size: 7919701
+      isexec: true
+    - path: data/raw/RoundaboutHD/RoundaboutHD_Reid_subset
+      hash: md5
+      md5: 0b01d68e2857c7f949ede5842fcc3ee2.dir
+      size: 1140203205
+      nfiles: 65522
+    - path: data/raw/RoundaboutHD/Vehicle_statistic.xlsx
+      hash: md5
+      md5: d621d1961f19a4b70ddf2c364bae4ae6
+      size: 42108
+      isexec: true
+    - path: data/raw/RoundaboutHD/imagesc001/SCT
+      hash: md5
+      md5: 264ed375113eac4cd85fadb9a4368885.dir
+      size: 2487374
+      nfiles: 1
+    - path: data/raw/RoundaboutHD/imagesc002/SCT
+      hash: md5
+      md5: 6f4b15043244e2a44d2e3f4c408d3df4.dir
+      size: 2210923
+      nfiles: 1
+    - path: data/raw/RoundaboutHD/imagesc003/SCT
+      hash: md5
+      md5: b90aecabaa6c7cb1e036be7ef1cc9c60.dir
+      size: 2395737
+      nfiles: 1
+    - path: data/raw/RoundaboutHD/imagesc004/SCT
+      hash: md5
+      md5: 17ecad08f0cbbf436e51d7ac527f01c2.dir
+      size: 2301885
+      nfiles: 1
+    - path: src/data/load.py
+      hash: md5
+      md5: ce9c806e21f0c4e0fed5c63ec448d621
+      size: 3996
+    - path: src/data/make_dataset.py
+      hash: md5
+      md5: fef078383c3c0aa5af6f856263ac6dfe
+      size: 3240
+    outs:
+    - path: data/processed
+      hash: md5
+      md5: badb7a3ff27e411525e19ad698922732.dir
+      size: 10657499
+      nfiles: 1
