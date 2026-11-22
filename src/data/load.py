@@ -59,7 +59,7 @@ def load_reid_index():
             if p.name.startswith("."):
                 continue
             parsed = parse_reid_name(p.name) or (None, None, None)
-            rows.append([str(p.relative_to(ROOT)), *parsed, split])
+            rows.append([p.relative_to(ROOT).as_posix(), *parsed, split])  # "/" on every OS
     return pd.DataFrame(rows, columns=["path", "id", "cam", "frame", "split"])
 
 

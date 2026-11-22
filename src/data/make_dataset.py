@@ -55,7 +55,8 @@ def main():
     cols = ["path", "id", "cam", "frame", "split", "role", "official_split", "track_id", "gid", "w", "h",
             "category", "colour", "make", "model"]
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    r[cols].astype({"track_id": "Int64", "gid": "Int64"}).sort_values(["split", "id", "cam", "frame"]).to_csv(OUT, index=False)
+    r[cols].astype({"track_id": "Int64", "gid": "Int64"}).sort_values(["split", "id", "cam", "frame"]).to_csv(
+        OUT, index=False, lineterminator="\n")  # same bytes on Windows, Mac and Linux
     print(r.groupby(["split", "role"]).agg(ids=("id", "nunique"), crops=("path", "size")))
 
 
