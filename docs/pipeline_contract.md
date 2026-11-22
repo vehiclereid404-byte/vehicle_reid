@@ -14,6 +14,7 @@ All deployed models must run on a **Raspberry Pi 5 + Hailo-8L**. See
 data/raw/RoundaboutHD ─ prepare ─► data/interim/          (cleaned GT, frame subsets, splits)
                                    outputs/*/gt/          (ground truth in pipeline formats)
                                    outputs/eval_masks/    (tracking scoring masks)
+RoundaboutHD_Reid_subset ─ reid_split ─► outputs/reid_split/gt/   (ID-disjoint ReID train/val/test split)
 videos ─ detect ─► outputs/detections/<run>/<cam>.csv
        ─ track  ─► outputs/tracks/<run>/<cam>.csv
        ─ reid   ─► outputs/reid/<run>/<cam>.npz
@@ -54,6 +55,7 @@ you switch `input:` in `params.yaml` to a real run.
 | `reports/metrics/<stage>_<run>.json` | flat `{"metric": number}` | each stage, via `src/evaluation` |
 | `outputs/eval_masks/skip_frames.csv` | `cam,frame`: frames dropped from tracking scoring | prepare |
 | `outputs/eval_masks/ignore_regions.json` | `{cam: [polygon, ...]}`, polygon = `[[x, y], ...]` in full-frame pixels | prepare |
+| `outputs/reid_split/gt/crops.csv` | `path,cam,frame,track_id,global_id,vehicle_id,group,file_id,official,split,role,w,h`, one row per ReID crop (see ReID split) | reid_split |
 
 Read and write these with `src/common/io.py`, so the column checks stay in one place.
 
@@ -105,6 +107,57 @@ Read and write these with `src/common/io.py`, so the column checks stay in one p
 - `reports/data_quality.json`: a list of `{id, title, count, per_camera, fix_applied}` with stable ids
   (`D01`, `D02`, ...). `python -m src.data.checks` prints it.
 
+## ReID split (`reid_split`, written by `python -m src.data.reid_split`)
+
+An ID-disjoint train/val/test split of all ReID crops (official train, query and test folders together),
+for training and scoring ReID models. Settings: `reid_split` and `seed` in `params.yaml`.
+
+- `outputs/reid_split/gt/crops.csv`, one row per unique image (byte-identical copies are dropped: 650 of 65,522 files):
+  - `path` (repo-relative, forward slashes), `cam`, `frame` (1-based SCT frame = file-name frame + 1),
+    `track_id` (gt track, after the D07 split), `global_id` (from `outputs/matching/gt/global_ids.csv`).
+  - `vehicle_id`: the identity to train and score on: `global_id` with the identity fixes below.
+  - `group`: split group (smallest `vehicle_id` in it). Vehicles that may be one physical vehicle share a group.
+  - `file_id`: the id in the file name, a separate numbering (never equal to `global_id`).
+  - `official`: the official folder: `train`, `query`, `gallery` (= `test_images`), or `query+gallery` /
+    `train+query` for byte-identical copies. Use it to score the paper's protocol.
+  - `split` (`train`, `val`, `test`), `role` (`train`, `query`, `gallery`), `w`, `h` (crop size in pixels).
+  - LF line endings. Also written: `outputs/reid_split/gt/checks.json` (file-id conflicts, grouped pairs) and
+    `reports/metrics/reid_split_gt.json` (counts).
+- **Linking:** each crop is `img[int(y1):int(y2), int(x1):int(x2)]` of an SCT box at frame (file-name frame + 1),
+  checked on the video pixels. Its size equals that box's integer size for 64,871 of 64,872 crops (one is 1 px off).
+  22 crops fit two same-size boxes in their frame; the track that the file id's other crops link to is used (checked on the video).
+- **Identity fixes** (in `src/data/reid_split.py`, checked on the crops, `reports/figures/reid_check_*.jpg`; not in prepare yet):
+  - Multi_CAM 161 → 78: one black Chevrolet Colorado (cam01 78, cam02–03 161).
+  - cam03 track 526 and cam04 track 81 (both Multi_CAM 644) → 87: the tan Kia Sorento, which is 87 on cam02.
+    The rest of 644 (cam01, cam02, cam03 track 78) is a red dump truck.
+- **Split groups:** two vehicles join a group if
+  - crops of both on one camera differ in ≤ `near_dup_bits` (24) of 256 dHash bits (near-duplicates; this finds the same
+    vehicle on two trips, see Dataset facts, and also some look-alikes), or
+  - a single-camera vehicle may be a missed Multi_CAM link of a multi-camera one: same make and model in
+    `Vehicle_statistic.xlsx`, on a neighbouring camera the multi-camera vehicle is not seen on, ≤ `link_window_frames` (1,500) apart.
+  - Vehicles in a group of 2+ stay in train (17 + 25 pairs → 33 groups, 75 vehicles), so no near-duplicate or
+    possible same vehicle crosses splits and none is scored under two labels.
+- **Eligible for val/test:** a Multi_CAM vehicle (`vehicle_id` < 10000) with crops on ≥ 2 cameras, ≥ 2 crops on at least one
+  camera, alone in its group (263 of 310). Eligible vehicles are shuffled (`seed`) within each number of cameras (2, 3, 4):
+  40% test, 15% val, the rest train with every other vehicle.
+- **Query and gallery:** in val and test, for each vehicle and each camera with ≥ 2 crops, one random (seeded) crop is the
+  query; all other crops of the split are gallery. There are no distractor vehicles.
+- **Protocol:** each query ranks the gallery of its own split. Gallery crops with the same `vehicle_id` and the same `cam`
+  as the query are ignored. Report mAP and CMC Rank-1/5/10 over all queries. Every query has a cross-camera match (checked).
+- **Counts (seed 42):**
+
+  | split | vehicles | query | gallery or train crops |
+  |---|---|---|---|
+  | train | 366 (166 Multi_CAM, 200 single-camera) | – | 39,417 |
+  | val | 39 | 105 | 6,953 |
+  | test | 105 | 284 | 18,113 |
+
+- **Crop size vs the 256×128 Hailo ReID input:** the median crop is 160 × 101 px (w × h); w/h has median 1.56
+  (10–90%: 1.1–2.4). 64% of crops are under 128 px tall and 75% under 256 px wide, so most are upscaled at any of these sizes.
+  256×128 as H × W (portrait, the person-ReID shape of Hailo's RepVGG-A0 model) squeezes a median vehicle's width about 3×
+  relative to its height. W × H = 256 × 128 (landscape, same pixel count and cost) fits the vehicles better;
+  256 × 256 doubles the cost. The reid stage picks one and scores fp32 and int8 at that size.
+
 ## Swappable components
 
 | Stage | Interface | Method |
@@ -152,7 +205,7 @@ Read and write these with `src/common/io.py`, so the column checks stay in one p
 
 | Agent | Owns |
 |---|---|
-| `data-eval` | `src/data/`, `src/evaluation/`, `src/visualization/`, `docs/licenses.md`, DVC stage `prepare` |
+| `data-eval` | `src/data/`, `src/evaluation/`, `src/visualization/`, `docs/licenses.md`, DVC stages `prepare` and `reid_split` |
 | `detection` | `src/detection/`, `models/detection/`, DVC stage `detect` |
 | `tracking` | `src/tracking/`, DVC stage `track` |
 | `reid` | `src/reid/`, `models/reid/`, DVC stage `reid` |
@@ -212,3 +265,15 @@ each change must be reported. The old `process_data`, `train` and `eval` stages
     The 201 train-only IDs are single-camera vehicles with no Multi_CAM id.
   - All 310 query/gallery IDs also appear in train, from the same tracklets at interleaved frames (192 identical images).
     6 of them are seen by only one camera. Check the paper's protocol before reporting ReID scores.
+  - Byte-identical copies: 458 query images are also in `test_images` and 192 in `train_images` (same file name = same bytes).
+    8 official queries (6 IDs) have no gallery image from another camera.
+  - File ids follow the Multi_CAM ids in order but drift from them (never equal); single-camera vehicles are 754–954.
+    Linked to the corrected identities (see ReID split):
+    - file 673 is two vehicles: a white semi (469, cam01–02) and the box truck 664 (cam03–04).
+      The box truck is also files 25 (cam01) and 852 (cam02).
+    - file 953 is two cam04 vehicles: a red Toyota Yaris (track 364, also file 954) and a black sedan (track 365).
+    - files 592 (78 + 161) and 653 (87 + part of 644) are right; Multi_CAM is wrong there.
+  - **Multi_CAM ids are per trip, not per vehicle:** a vehicle that passes a camera twice gets two ids. Seen on the
+    crops: black Silverado 666 / 685 (cam02), a liveried blue Nissan 691 / 10171 (cam01); an IMI concrete mixer 83 / 653 (cam03)
+    is likely the same truck. The ReID file ids are per trip too. So one physical vehicle can have two `global_id`s;
+    the ReID split keeps such candidates together in train (`reports/figures/reid_check_repeat_visits.jpg`).

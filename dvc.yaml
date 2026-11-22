@@ -49,3 +49,23 @@ stages:
     outs:
       - data/processed:
           persist: true
+  reid_split:
+    cmd: python -m src.data.reid_split
+    deps:
+      - src/data/reid_split.py
+      - src/common/config.py
+      - data/raw/RoundaboutHD/RoundaboutHD_Reid_subset
+      - data/raw/RoundaboutHD/Vehicle_statistic.xlsx
+      - outputs/tracks/gt
+      - outputs/matching/gt
+    params:
+      - reid_split
+      - seed
+      - raw_dir
+      - cameras
+      - prepare.single_cam_id_offset
+    outs:
+      - outputs/reid_split/gt
+    metrics:
+      - reports/metrics/reid_split_gt.json:
+          cache: false

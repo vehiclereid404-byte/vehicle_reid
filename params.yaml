@@ -27,6 +27,13 @@ prepare:
     - {cam: cam03, mc_id: 553, from_frame: 339, to_frame: 599, new_id: null, issue: D24,
        reason: "boxes are SCT track 29, a street sweeper; 553 is the silver Subaru (cam03 track 293)"}
 
+reid_split:                  # ID-disjoint ReID split of the ReID crops (src/data/reid_split.py, uses `seed`)
+  val_frac: 0.15             # share of the eligible multi-camera vehicles in val
+  test_frac: 0.40            # ... and in test; the rest go to train with every other vehicle
+  queries_per_cam: 1         # query crops per val/test vehicle and camera (cameras with 2+ crops)
+  near_dup_bits: 24          # crops of two vehicles on one camera within this many of 256 dhash bits -> same split group
+  link_window_frames: 1500   # possible missed Multi_CAM link: same make+model, unseen neighbouring camera, gap <= this
+
 detection:
   run: baseline            # outputs/detections/<run>/
   model:

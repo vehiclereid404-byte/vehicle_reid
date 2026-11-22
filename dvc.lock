@@ -195,3 +195,59 @@ stages:
       md5: badb7a3ff27e411525e19ad698922732.dir
       size: 10657499
       nfiles: 1
+  reid_split:
+    cmd: python -m src.data.reid_split
+    deps:
+    - path: data/raw/RoundaboutHD/RoundaboutHD_Reid_subset
+      hash: md5
+      md5: 0b01d68e2857c7f949ede5842fcc3ee2.dir
+      size: 1140203205
+      nfiles: 65522
+    - path: data/raw/RoundaboutHD/Vehicle_statistic.xlsx
+      hash: md5
+      md5: d621d1961f19a4b70ddf2c364bae4ae6
+      size: 42108
+    - path: outputs/matching/gt
+      hash: md5
+      md5: e8e4cdb0b6fe0f73a919a6d8d8005287.dir
+      size: 15791
+      nfiles: 1
+    - path: outputs/tracks/gt
+      hash: md5
+      md5: da91d61d45c353fbb1ba172af27a0092.dir
+      size: 9988346
+      nfiles: 4
+    - path: src/common/config.py
+      hash: md5
+      md5: bee3de04b273acda0c1b33edbaf34c7c
+      size: 805
+    - path: src/data/reid_split.py
+      hash: md5
+      md5: b4e6cd96b6be84868e20dbdced3b63b0
+      size: 17320
+    params:
+      params.yaml:
+        cameras:
+        - cam01
+        - cam02
+        - cam03
+        - cam04
+        prepare.single_cam_id_offset: 10000
+        raw_dir: data/raw/RoundaboutHD
+        reid_split:
+          val_frac: 0.15
+          test_frac: 0.4
+          queries_per_cam: 1
+          near_dup_bits: 24
+          link_window_frames: 1500
+        seed: 42
+    outs:
+    - path: outputs/reid_split/gt
+      hash: md5
+      md5: f3f078e82f93304555356f456a944fc4.dir
+      size: 9047426
+      nfiles: 2
+    - path: reports/metrics/reid_split_gt.json
+      hash: md5
+      md5: 14927a2701338403ddc059a1a7e222c2
+      size: 867
