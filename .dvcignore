@@ -1,0 +1,4 @@
+# The camera videos (6.7 GB) are not versioned by DVC. Copy them from the team's
+# shared drive to data/raw/RoundaboutHD/imagesc00N/video.mp4. Everything else in
+# data/raw (labels, SCT and Multi_CAM ground truth, geo-mapping, ReID crops) is in DVC.
+/data/raw/RoundaboutHD/imagesc*/video.mp4

@@ -1,7 +1,8 @@
 """Prepare stage: turn the RoundaboutHD annotations into the pipeline's `gt` runs.
 
 Writes outputs/detections/gt/<cam>.csv, outputs/tracks/gt/<cam>.csv,
-outputs/matching/gt/global_ids.csv and reports/data_quality.json.
+outputs/matching/gt/global_ids.csv, the tracking scoring masks in outputs/eval_masks/
+and reports/data_quality.json.
 Run from the repo root:  python -m src.data.prepare
 """
 import json
@@ -16,6 +17,7 @@ from src.common.config import ROOT, load_params
 from src.common.io import DET_COLS, GLOBAL_COLS, TRACK_COLS, write_table
 from src.data import checks
 from src.data.boxes import XYXY, clip_to_xywh, match_by_frame, outside_frame
+from src.data.regions import MASK_DIR, REGION_FILE, SKIP_FILE, region_polygons
 
 LABEL_NAME = re.compile(r"(?:^|/)img(\d{6})\.txt$")
 
@@ -61,6 +63,20 @@ def read_multicam(path: Path) -> pd.DataFrame:
     return df
 
 
+def correct_multicam(mc: pd.DataFrame, corrections: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
+    """Apply params `prepare.mc_corrections`: rows of mc_id on cam in from_frame..to_frame
+    get new_id, or are dropped if new_id is None. Returns (corrected mc, corrections with `rows` changed)."""
+    mc, applied = mc.copy(), []
+    for c in corrections or []:
+        rows = (mc.cam == c["cam"]) & (mc.mc_id == c["mc_id"]) & mc.frame.between(c["from_frame"], c["to_frame"])
+        if c["new_id"] is None:
+            mc = mc[~rows]
+        else:
+            mc.loc[rows, "mc_id"] = c["new_id"]
+        applied.append({**c, "rows": int(rows.sum())})
+    return mc.reset_index(drop=True), applied
+
+
 def attach_mc_ids(sct: pd.DataFrame, mc: pd.DataFrame, min_iou: float) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Give each SCT row the Multi_CAM id whose box matches it in the same frame (-1 if none).
 
@@ -97,6 +113,54 @@ def split_id_switches(sct: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
     return sct, splits
 
 
+def majority_id(mc_ids: pd.Series) -> int:
+    """Most frequent Multi_CAM id in a track's rows (ties: the one value_counts lists first), -1 if none."""
+    ids = mc_ids[mc_ids >= 0].value_counts()
+    return -1 if ids.empty else int(ids.index[0])
+
+
+def split_lost_ids(sct: pd.DataFrame) -> tuple[pd.DataFrame, list[dict], list[dict]]:
+    """Split a track that goes on after its Multi_CAM id moved to another track (issue D20).
+
+    Safety net: after the Multi_CAM corrections it finds no case on RoundaboutHD.
+
+    Rule: a Multi_CAM id moves from track A to track B of the camera at frame f (A's last
+    frame with the id is before f, B's first is f), and all of A's rows at frames >= f have no
+    Multi_CAM id. Then A's rows from f on are another vehicle: they get a new track id (max
+    track id on the camera + 1) and so their own single-camera global id.
+    Only cases where A and B would share a global id in the same frame are split; the others
+    are returned unchanged. Returns (sct, split cases, cases left alone).
+    """
+    sct = sct.copy()
+    applied, skipped = [], []
+    next_id = int(sct.track_id.max()) + 1
+    for mc_id, g in sct[sct.mc_id >= 0].groupby("mc_id"):
+        spans = g.groupby("track_id").frame.agg(["min", "max"]).sort_values("min")
+        for a, b in zip(spans.index[:-1], spans.index[1:]):
+            f = spans.at[b, "min"]
+            later = (sct.track_id == a) & (sct.frame >= f)
+            if spans.at[a, "max"] >= f or not later.any() or (sct.mc_id[later] >= 0).any():
+                continue
+            in_b = sct.track_id == b
+            same_gid = majority_id(sct.mc_id[sct.track_id == a]) == majority_id(sct.mc_id[in_b])
+            shared = int(sct.frame[later].isin(sct.frame[in_b]).sum()) if same_gid else 0
+            case = dict(track_id=int(a), from_frame=int(f), rows=int(later.sum()), mc_id=int(mc_id),
+                        to_track_id=int(b), shared_frames=shared)
+            if shared:
+                sct.loc[later, "track_id"] = next_id
+                applied.append({**case, "new_track_id": next_id})
+                next_id += 1
+            else:
+                skipped.append(case)
+    return sct, applied, skipped
+
+
+def shared_global_rows(tracks: pd.DataFrame, glob: pd.DataFrame) -> pd.DataFrame:
+    """Rows whose global id is on another track of the camera in the same frame."""
+    with_gid = tracks.merge(glob[["track_id", "global_id"]], on="track_id")
+    return with_gid[with_gid.duplicated(["frame", "global_id"], keep=False)]
+
+
 def drop_duplicates(sct: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Keep the first row of each (frame, track_id); return (kept, dropped)."""
     dup = sct.duplicated(["frame", "track_id"], keep="first")
@@ -112,11 +176,19 @@ def global_ids(sct: pd.DataFrame, cam: str, single_cam_offset: int) -> tuple[pd.
         if ids.empty:
             gid = int(cam[-2:]) * single_cam_offset + int(tid)
         else:
-            gid = int(ids.index[0])
+            gid = majority_id(g.mc_id)
             if len(ids) > 1:
                 votes.append(dict(cam=cam, track_id=int(tid), votes={int(k): int(v) for k, v in ids.items()}))
         rows.append((cam, int(tid), gid, ids.empty))
     return pd.DataFrame(rows, columns=[*GLOBAL_COLS, "single_cam"]), votes
+
+
+def write_masks(skip_frames: pd.DataFrame, regions: dict) -> None:
+    """outputs/eval_masks/: skip_frames.csv (cam,frame) and ignore_regions.json (one camera per line)."""
+    MASK_DIR.mkdir(parents=True, exist_ok=True)
+    skip_frames.to_csv(MASK_DIR / SKIP_FILE, index=False)
+    lines = [f'  "{cam}": {json.dumps(polygons)}' for cam, polygons in regions.items()]
+    (MASK_DIR / REGION_FILE).write_text("{\n" + ",\n".join(lines) + "\n}\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -124,10 +196,14 @@ def main() -> None:
     p = params["prepare"]
     raw = ROOT / params["raw_dir"]
     width, height = p["frame_width"], p["frame_height"]
-    multicam = read_multicam(raw / "Multi_CAM_Ground_Turth.txt")
+    multicam, corrections = correct_multicam(read_multicam(raw / "Multi_CAM_Ground_Turth.txt"),
+                                             p.get("mc_corrections"))
+    for c in corrections:
+        print(f"Multi_CAM correction {c['issue']}: {c['cam']} id {c['mc_id']}, frames {c['from_frame']}-"
+              f"{c['to_frame']} -> {'dropped' if c['new_id'] is None else c['new_id']} ({c['rows']} rows)")
     assert multicam.mc_id.max() < p["single_cam_id_offset"], "single-camera ids would collide with Multi_CAM ids"
 
-    stats, all_globals = {}, []
+    stats, all_globals, skip_frames, regions = {}, [], [], {}
     for cam in params["cameras"]:
         folder = cam_dir(raw, cam)
         labels, label_folders, label_frames = read_labels(folder / "detection" / "labels_GT.zip")
@@ -140,9 +216,13 @@ def main() -> None:
         det["score"] = 1.0
         write_table(det, ROOT / "outputs" / "detections" / "gt" / f"{cam}.csv", DET_COLS)
 
-        # tracks: Multi_CAM ids per row -> split id switches -> drop duplicates -> clip
+        # tracks: Multi_CAM ids per row (corrected: D06, D24) -> split id switches (D07) and lost ids (D20)
+        #         -> drop duplicates -> clip
         sct, mc_unmatched = attach_mc_ids(sct_raw, mc, p["match_iou"])
         sct, splits = split_id_switches(sct)
+        before, _ = drop_duplicates(sct)
+        shared_before = shared_global_rows(before, global_ids(before, cam, p["single_cam_id_offset"])[0])
+        sct, lost_splits, lost_skipped = split_lost_ids(sct)
         sct, dropped = drop_duplicates(sct)
         trk = clip_to_xywh(sct, width, height)
         trk["score"], trk["cls"] = 1.0, 2
@@ -151,8 +231,14 @@ def main() -> None:
 
         glob, votes = global_ids(sct, cam, p["single_cam_id_offset"])
         all_globals.append(glob)
-        with_gid = trk.merge(glob[["track_id", "global_id"]], on="track_id")
-        shared = with_gid[with_gid.duplicated(["frame", "global_id"], keep=False)]
+        for d in lost_splits:
+            d["new_global_id"] = int(glob.global_id[glob.track_id == d["new_track_id"]].iloc[0])
+        shared = shared_global_rows(trk, glob)
+
+        # tracking scoring masks: frames with no gt tracks (D11), area that SCT annotates (D23)
+        skip_frames += [(cam, f) for f in checks.frames_without_rows(trk, p["n_frames"])]
+        regions[cam] = region_polygons(trk, width, height, p["region_cell_px"], p["region_close_px"],
+                                       p["region_margin_px"], p["region_simplify_px"])
 
         stats[cam] = dict(
             label_files=len(label_frames), label_folders=sorted(label_folders),
@@ -160,6 +246,7 @@ def main() -> None:
             sct_rows=len(sct_raw), track_rows=len(trk), sct_outside=int(outside_frame(sct, width, height).sum()),
             tracks_before=int(sct_raw.track_id.nunique()), tracks_after=int(trk.track_id.nunique()),
             splits=splits, dropped=dropped, votes=votes,
+            lost_splits=lost_splits, lost_skipped=lost_skipped, shared_before=shared_before,
             single_cam_tracks=int(glob.single_cam.sum()), global_rows=len(glob), shared_global=shared,
             mc_unmatched=mc_unmatched, mc_rows=len(mc),
             empty_frames=checks.frames_without_rows(sct_raw, p["n_frames"]),
@@ -169,14 +256,19 @@ def main() -> None:
             test_not_in_sct=checks.boxes_not_in(labels_test, sct_raw, p["same_box_px"]),
             test_files_missing=p["n_frames"] - len(test_frames),
             world_unknown=int(((mc.xworld == -1) & (mc.yworld == -1)).sum()),
+            region=checks.region_coverage(trk, det, sct_raw, regions[cam], p["match_iou"], width, height),
         )
-        print(f"{cam}: {len(det)} detections, {len(trk)} track rows, "
-              f"{stats[cam]['tracks_after']} tracks, {len(splits)} split, {len(dropped)} duplicates dropped")
+        print(f"{cam}: {len(det)} detections, {len(trk)} track rows, {stats[cam]['tracks_after']} tracks, "
+              f"{len(splits)} id switches split, {len(lost_splits)} lost ids split, "
+              f"{len(dropped)} duplicates dropped")
 
     glob = pd.concat(all_globals, ignore_index=True)
     write_table(glob, ROOT / "outputs" / "matching" / "gt" / "global_ids.csv", GLOBAL_COLS)
+    write_masks(pd.DataFrame(skip_frames, columns=["cam", "frame"]), regions)
+    print("\nIgnore regions (box bottom-centre tested)")
+    print(pd.DataFrame({c: s["region"] for c, s in stats.items()}).T.round(2).to_string())
 
-    issues = checks.quality_log(stats, raw, p)
+    issues = checks.quality_log(stats, raw, p, corrections)
     out = ROOT / "reports" / "data_quality.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(issues, indent=2), encoding="utf-8")

@@ -65,9 +65,9 @@ stages:
       size: 1414
     - path: src/data
       hash: md5
-      md5: abb9c06a1cb4cf72b58541301bf4c583.dir
-      size: 66356
-      nfiles: 11
+      md5: 1c0e7442c845d5a4e9491a5455dbd17a.dir
+      size: 108365
+      nfiles: 13
     params:
       params.yaml:
         cameras:
@@ -83,6 +83,27 @@ stages:
           class_iou: 0.7
           same_box_px: 1.0
           single_cam_id_offset: 10000
+          region_cell_px: 8
+          region_close_px: 64
+          region_margin_px: 16
+          region_simplify_px: 8
+          mc_corrections:
+          - cam: cam01
+            mc_id: 553
+            from_frame: 4075
+            to_frame: 4188
+            new_id: 554
+            issue: D06
+            reason: boxes are SCT track 223, the white service pickup (554 on 
+              cam02/03); 553 is the silver Subaru, track 225
+          - cam: cam03
+            mc_id: 553
+            from_frame: 339
+            to_frame: 599
+            new_id:
+            issue: D24
+            reason: boxes are SCT track 29, a street sweeper; 553 is the silver 
+              Subaru (cam03 track 293)
         raw_dir: data/raw/RoundaboutHD
     outs:
     - path: outputs/detections/gt
@@ -90,17 +111,22 @@ stages:
       md5: a5b75a9061ec89c5e06ceb652f371b29.dir
       size: 20302066
       nfiles: 4
+    - path: outputs/eval_masks
+      hash: md5
+      md5: 1d6f9872d6f9716f1a956eecb2e12812.dir
+      size: 5692
+      nfiles: 2
     - path: outputs/matching/gt
       hash: md5
-      md5: 170d3862d5920ae0f1be8d8365c0b1ee.dir
-      size: 15804
+      md5: e8e4cdb0b6fe0f73a919a6d8d8005287.dir
+      size: 15791
       nfiles: 1
     - path: outputs/tracks/gt
       hash: md5
-      md5: 5af00a23254fa2a2db6f9b5af9080e56.dir
+      md5: da91d61d45c353fbb1ba172af27a0092.dir
       size: 9988346
       nfiles: 4
     - path: reports/data_quality.json
       hash: md5
-      md5: 752d0356e5b39fc694c2543674d7ccc3
-      size: 6044
+      md5: b580c7150b40f63f6308a945dc0199cc
+      size: 8225

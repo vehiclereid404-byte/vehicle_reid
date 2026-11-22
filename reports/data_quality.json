@@ -61,7 +61,7 @@
   },
   {
     "id": "D06",
-    "title": "ID switch: cam01 track 223 is two vehicles in Multi_CAM",
+    "title": "Multi_CAM ID swap on cam01 after an occlusion: rows relabelled 553->554",
     "count": 114,
     "per_camera": {
       "cam01": 114,
@@ -69,7 +69,7 @@
       "cam03": 0,
       "cam04": 0
     },
-    "fix_applied": "split at frame 4075: frames >= 4075 became track 518 (Multi_CAM 554 before, 553 after)"
+    "fix_applied": "corrected before matching to SCT (params.yaml prepare.mc_corrections): cam01 Multi_CAM id 553, frames 4075-4188: 114 rows relabelled 554 (boxes are SCT track 223, the white service pickup (554 on cam02/03); 553 is the silver Subaru, track 225)"
   },
   {
     "id": "D07",
@@ -86,11 +86,11 @@
   {
     "id": "D08",
     "title": "SCT tracks with no multi-camera id",
-    "count": 208,
+    "count": 209,
     "per_camera": {
       "cam01": 83,
       "cam02": 23,
-      "cam03": 34,
+      "cam03": 35,
       "cam04": 68
     },
     "fix_applied": "own global id = camera number x 10000 + track_id"
@@ -129,7 +129,7 @@
       "cam03": 0,
       "cam04": 131
     },
-    "fix_applied": "left empty (cam02: 2946; cam04: 4099-4229); SCT rows whose frame has no labels_GT file: 0"
+    "fix_applied": "skipped in tracking scoring for gt and predictions alike (cam02: 2946; cam04: 4099-4229; listed in outputs/eval_masks/skip_frames.csv, applied by src/evaluation/masks.py:apply_masks); SCT rows whose frame has no labels_GT file: 0"
   },
   {
     "id": "D12",
@@ -165,11 +165,11 @@
   {
     "id": "D18",
     "title": "Multi_CAM world coordinates are all -1 (unknown)",
-    "count": 177782,
+    "count": 177521,
     "per_camera": {
       "cam01": 35821,
       "cam02": 49882,
-      "cam03": 52621,
+      "cam03": 52360,
       "cam04": 39458
     },
     "fix_applied": "left open: world coordinates are not used"
@@ -188,14 +188,38 @@
   },
   {
     "id": "D20",
-    "title": "One global id on two tracks of a camera in the same frame (rows)",
-    "count": 174,
+    "title": "One global id on two tracks of a camera in the same frame (rows, before the fix)",
+    "count": 0,
     "per_camera": {
-      "cam01": 174,
+      "cam01": 0,
       "cam02": 0,
       "cam03": 0,
       "cam04": 0
     },
-    "fix_applied": "left open, needs a team decision: cam01 global id 553: tracks [225, 518], frames 4075-4161"
+    "fix_applied": "resolved by the D06 correction; no case left (src/data/prepare.py:split_lost_ids finds none)"
+  },
+  {
+    "id": "D23",
+    "title": "Background traffic: moving labels_GT boxes with no SCT box, outside the area SCT annotates",
+    "count": 40431,
+    "per_camera": {
+      "cam01": 11391,
+      "cam02": 17625,
+      "cam03": 8614,
+      "cam04": 2801
+    },
+    "fix_applied": "tracking scoring drops gt and predicted rows whose box bottom-centre is outside the camera's ignore region (outputs/eval_masks/ignore_regions.json; bottom edges of all gt track boxes on a 8-px grid, closed 64 px, dilated 16 px, simplified 8 px). Moving = not flagged by the parked rule after linking boxes at IoU >= 0.3 over gaps <= 15 frames. cam01: gt track rows inside 100.00%, labels_GT boxes with an SCT box inside 100.00%, moving labels_GT boxes with no SCT box outside 72.6% (11391 of 15680), image area inside 59.9%; cam02: gt track rows inside 100.00%, labels_GT boxes with an SCT box inside 100.00%, moving labels_GT boxes with no SCT box outside 78.9% (17625 of 22346), image area inside 51.2%; cam03: gt track rows inside 100.00%, labels_GT boxes with an SCT box inside 100.00%, moving labels_GT boxes with no SCT box outside 58.6% (8614 of 14702), image area inside 61.5%; cam04: gt track rows inside 100.00%, labels_GT boxes with an SCT box inside 100.00%, moving labels_GT boxes with no SCT box outside 26.2% (2801 of 10690), image area inside 46.6%"
+  },
+  {
+    "id": "D24",
+    "title": "Multi_CAM ID 553 reused on cam03 for a second vehicle (track 29, a street sweeper)",
+    "count": 261,
+    "per_camera": {
+      "cam01": 0,
+      "cam02": 0,
+      "cam03": 261,
+      "cam04": 0
+    },
+    "fix_applied": "corrected before matching to SCT (params.yaml prepare.mc_corrections): cam03 Multi_CAM id 553, frames 339-599: 261 rows dropped (boxes are SCT track 29, a street sweeper; 553 is the silver Subaru (cam03 track 293))"
   }
 ]

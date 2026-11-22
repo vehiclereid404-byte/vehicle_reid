@@ -26,6 +26,7 @@ stages:
       - outputs/detections/gt
       - outputs/tracks/gt
       - outputs/matching/gt
+      - outputs/eval_masks
     metrics:
       - reports/data_quality.json:
           cache: false

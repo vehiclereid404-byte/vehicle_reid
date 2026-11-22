@@ -90,3 +90,6 @@ coverage.xml
 
 # Mypy cache
 .mypy_cache/
+
+# generated progress reports (PDF)
+/reports/*.pdf

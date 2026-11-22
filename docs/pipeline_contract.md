@@ -13,6 +13,7 @@ All deployed models must run on a **Raspberry Pi 5 + Hailo-8L**. See
 ```
 data/raw/RoundaboutHD ─ prepare ─► data/interim/          (cleaned GT, frame subsets, splits)
                                    outputs/*/gt/          (ground truth in pipeline formats)
+                                   outputs/eval_masks/    (tracking scoring masks)
 videos ─ detect ─► outputs/detections/<run>/<cam>.csv
        ─ track  ─► outputs/tracks/<run>/<cam>.csv
        ─ reid   ─► outputs/reid/<run>/<cam>.npz
@@ -51,6 +52,8 @@ you switch `input:` in `params.yaml` to a real run.
 | `outputs/matching/<run>/global_ids.csv` | `cam,track_id,global_id` | matching |
 | `outputs/od/<run>/<cam>.csv`, `corridor.csv` | count matrices, rows = origin, cols = destination | od |
 | `reports/metrics/<stage>_<run>.json` | flat `{"metric": number}` | each stage, via `src/evaluation` |
+| `outputs/eval_masks/skip_frames.csv` | `cam,frame`: frames dropped from tracking scoring | prepare |
+| `outputs/eval_masks/ignore_regions.json` | `{cam: [polygon, ...]}`, polygon = `[[x, y], ...]` in full-frame pixels | prepare |
 
 Read and write these with `src/common/io.py`, so the column checks stay in one place.
 
@@ -60,9 +63,21 @@ Read and write these with `src/common/io.py`, so the column checks stay in one p
   Clipped to the frame, `score` = 1.0, `cls` as labelled (2, 3, 5, 7).
 - `outputs/tracks/gt/<cam>.csv`: `SCT_GT` clipped to the frame, `score` = 1.0, `cls` = 2.
   For a duplicate `(frame, track_id)`, the first row is kept.
+- **Multi_CAM corrections** (`prepare.mc_corrections` in `params.yaml`, `src/data/prepare.py:correct_multicam`):
+  Multi_CAM rows that are wrong on the video are relabelled or dropped right after reading, before they are matched
+  to SCT tracks. Each correction names the camera, id, frame range, new id (`null` = drop), issue code and reason;
+  `reports/data_quality.json` logs the rows changed.
+  - D06: cam01 553, frames 4075–4188 → 554 (114 rows). The boxes are track 223, the white pickup (554).
+  - D24: cam03 553, frames 339–599 dropped (261 rows). The boxes are track 29, a street sweeper, which so falls back to
+    the single-camera id 30029.
 - **ID switches:** Multi_CAM sometimes gives one SCT track two vehicle ids in separate time spans.
   Such a track is split at the first frame of the later id, and the later part gets track id = max track id on that camera + 1.
-  Here: cam01 223 → 518 from frame 4075, and cam03 86 → 526 from frame 1288.
+  Here (after the corrections) there is one: cam03 86 → 526 from frame 1288 (D07).
+- **Lost ids (D20, `src/data/prepare.py:split_lost_ids`):** a Multi_CAM id moves from track A to track B of the
+  same camera at frame f, and all of A's rows at frames ≥ f have no Multi_CAM id while B carries it.
+  Then A is split at f: the later part gets track id = max track id on that camera + 1, and so its own
+  single-camera global id. Only cases where A and B would otherwise share a global id in the same frame are split.
+  After the Multi_CAM corrections it finds no case; it stays as a check.
 - `outputs/matching/gt/global_ids.csv`: one row per gt track.
   - `global_id` = the Multi_CAM id of its boxes (IoU ≥ 0.5; majority vote if there are several).
   - A track with no Multi_CAM id gets `camera number × 10000 + track_id` (cam02 track 7 → 20007).
@@ -74,6 +89,19 @@ Read and write these with `src/common/io.py`, so the column checks stay in one p
   - On the data it flags 0 of 1,044 SCT tracks. Its 10-s minimum keeps short pieces of slow traffic safe.
   - It covers 82% of the `labels_GT` boxes that have no SCT box. The rest are mostly distant traffic
     outside the roundabout, which SCT doesn't annotate, so trackers are still charged for those.
+    The ignore region (below) now drops most of them from tracking scoring.
+- **Tracking scoring masks** (`outputs/eval_masks/`, written by prepare). The tracking scorer applies them with
+  `src/evaluation/masks.py:apply_masks(df, cam)` to gt and predicted rows alike, after dropping parked tracks.
+  Detection scoring doesn't use them.
+  - **Skip frames (D11):** frames with no SCT rows (cam02 2946, cam04 4099–4229) are dropped.
+  - **Ignore region (D23):** one region per camera, a list of polygons around the area SCT annotates.
+    A row is dropped if its box bottom-centre `(x + w/2, y + h)` is outside every polygon (on the edge counts as inside).
+    - The region is built from the data (`src/data/regions.py`, `region_*` in `params.yaml`): mark the bottom edges
+      of all gt track boxes on an 8-px grid, close by 64 px, dilate by 16 px and simplify by 8 px.
+    - It keeps 100% of the gt track rows and covers 47–62% of the image.
+    - It drops 73%, 79%, 59% and 26% (cam01..cam04) of the moving `labels_GT` boxes that have no SCT box.
+      cam04 drops the fewest: most of those boxes are on its far approach road, inside the stretch where SCT annotates some vehicles but not others.
+    - Check images: `reports/figures/ignore_region_cam0N.jpg` (`python -m src.visualization.ignore_regions`).
 - `reports/data_quality.json`: a list of `{id, title, count, per_camera, fix_applied}` with stable ids
   (`D01`, `D02`, ...). `python -m src.data.checks` prints it.
 
@@ -139,6 +167,8 @@ each change must be reported. The old `process_data`, `train` and `eval` stages
 ## Dataset facts (RoundaboutHD)
 
 - 4 cameras, one `video.mp4` (1.2–2.3 GB) per camera: 3840×2160, 15 fps, 9000 frames (10 min).
+  The videos are not in DVC (`.dvcignore`); everyone copies them from the shared drive.
+  `raw_data.dvc` versions the rest of `data/raw` (1.2 GB). A DVC stage can still list a video as a dep.
   The README calls them synchronised. Cross-camera travel times agree with that.
 - The cameras form a corridor cam01 – cam02 – cam03 – cam04. Median travel time between neighbouring cameras is 30–50 s
   (1↔2 ≈ 450–500 frames, 2↔3 ≈ 720, 3↔4 ≈ 600). The 10th percentile is ≥ 26 s; the shortest is 8 s (2→1).
@@ -154,16 +184,22 @@ each change must be reported. The old `process_data`, `train` and `eval` stages
 - `SCT/SCT_GT.txt` is the single-camera tracking ground truth: `frame track_id x1 y1 x2 y2 cls`, frames 1..9000.
   - Track ids are per camera and have gaps (cam01: 262 tracks, ids 1..517).
   - Duplicate `(frame, track_id)` rows with different boxes: cam01 2 (track 214), cam03 10 (431), cam04 14 (105, 314).
-  - Frames with no rows: cam02 2946, cam04 4099–4229.
+  - Frames with no rows: cam02 2946, cam04 4099–4229. Tracking scoring skips them (D11).
 - `Multi_CAM_Ground_Turth.txt` (the misspelling is in the file name):
   `cam id frame x y w h xworld yworld`.
   - Boxes and frames are SCT_GT's: 99.97% of rows equal an SCT box in the same frame.
     `id` is a cross-camera vehicle id, unrelated to SCT track ids, so map it per camera by box match.
-  - 311 ids, 305 of them seen by 2–4 cameras. Per camera, 179/262, 221/244, 245/279 and 189/257 SCT tracks get an id. The rest have none.
-  - It fixes two SCT id switches: cam01 track 223 is 554 then 553, and cam03 track 86 is 643 then 644.
-    So the mapping is not strictly one-to-one. Prepare splits these tracks (see Ground truth runs).
-  - Around that switch, cam01 track 225 (frames 4075–4161) has no Multi_CAM id but inherits 553.
-    So 553 is on two cam01 tracks at once (data quality issue D20, still open).
+  - 311 ids, 305 of them seen by 2–4 cameras. Per camera, 179/262, 221/244, 245/279 and 189/257 SCT tracks get an id
+    (cam03: 244/279 after the D24 correction). The rest have none.
+  - It fixes one SCT id switch: cam03 track 86 is 643 (frames 1134–1139, a red SUV) then 644 (1288+, a grey SUV).
+    So the mapping is not strictly one-to-one. Prepare splits that track (see Ground truth runs).
+  - It has two errors of its own, checked on the video and corrected by prepare (see Multi_CAM corrections):
+    - cam01 (D06): tracks 223 (white service pickup, 554) and 225 (silver Subaru, 553) pass behind the "MARMON"
+      sign around frames 4070–4076. After it, Multi_CAM puts 553 on track 223's boxes (frames 4075–4188), and
+      track 225 (frames 4075–4161) has no id. The SCT tracks are right. Before the correction this also put 553 on
+      two cam01 tracks at once (D20).
+    - cam03 (D24): 553 is reused for two vehicles, track 29 (frames 339–599, a street sweeper) and track 293
+      (frames 5378–5689, the Subaru). It is the only Multi_CAM id that spans more than 1,800 frames on one camera.
   - cam02 id 431 (frames 1–52) has no SCT box. All world coordinates are `-1` (unknown).
 - `Vehicle_statistic.xlsx`: one sheet per camera, one row per SCT track id (colour, make, model, category).
 - `RoundaboutHD_Reid_subset/` (`test_images/` is the gallery):

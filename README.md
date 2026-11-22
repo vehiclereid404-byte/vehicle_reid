@@ -10,7 +10,9 @@ Instructions
 1. *Optional:* Run `make virtualenv` to create a python virtual environment. Skip if using conda or some other env manager.
     1. Run `source env/bin/activate` to activate the virtualenv.
 1. Run `make requirements` to install required python packages.
-1. Put the raw data in `data/raw`.
+1. Run `dvc pull` to get `data/raw/RoundaboutHD` (labels, ground truth, geo-mapping, ReID crops).
+   The four camera videos are not in DVC (see `.dvcignore`): copy them from the shared drive to
+   `data/raw/RoundaboutHD/imagesc00N/video.mp4`.
 1. To save the raw data to the DVC cache, run `dvc commit raw_data.dvc`
 1. Edit the code files to your heart's desire.
 1. Process your data, train and evaluate your model using `dvc repro eval.dvc` or `make reproduce`
@@ -41,8 +43,7 @@ Project Organization
     │
     ├── reports            <- Generated analysis as HTML, PDF, LaTeX, etc.
     │   └── figures                 <- Generated graphics and figures to be used in reporting
-    │   └── metrics.txt             <- Relevant metrics after evaluating the model.
-    │   └── training_metrics.txt    <- Relevant metrics from training the model.
+    │   └── data_quality.json       <- Data issues found and fixed by the prepare stage.
     │
     ├── requirements.txt   <- The requirements file for reproducing the analysis environment, e.g.
     │                         generated with `pip freeze > requirements.txt`
