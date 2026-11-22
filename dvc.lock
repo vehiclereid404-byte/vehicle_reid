@@ -63,11 +63,26 @@ stages:
       hash: md5
       md5: fca467b93c278ce51ff1443866810331
       size: 1414
-    - path: src/data
+    - path: src/data/boxes.py
       hash: md5
-      md5: 1c0e7442c845d5a4e9491a5455dbd17a.dir
-      size: 108365
-      nfiles: 13
+      md5: 7bacbe276523b631571e6a8579e18eaa
+      size: 2295
+    - path: src/data/checks.py
+      hash: md5
+      md5: 7a9eae84292340a3b9815e2d524fca6b
+      size: 16829
+    - path: src/data/parked.py
+      hash: md5
+      md5: dec42683a1e9d38050a27bc8069c7a6e
+      size: 1685
+    - path: src/data/prepare.py
+      hash: md5
+      md5: 41f81fb46fee57ce6eec8727952dd0e8
+      size: 14173
+    - path: src/data/regions.py
+      hash: md5
+      md5: 24ba92ca46c78a491b408180180b80cc
+      size: 4131
     params:
       params.yaml:
         cameras:
@@ -130,3 +145,53 @@ stages:
       hash: md5
       md5: b580c7150b40f63f6308a945dc0199cc
       size: 8225
+  process_data:
+    cmd: python -m src.data.make_dataset
+    deps:
+    - path: data/raw/RoundaboutHD/Multi_CAM_Ground_Turth.txt
+      hash: md5
+      md5: 8ddf14af0bdbd53f440b7c0da2129302
+      size: 7919701
+    - path: data/raw/RoundaboutHD/RoundaboutHD_Reid_subset
+      hash: md5
+      md5: 0b01d68e2857c7f949ede5842fcc3ee2.dir
+      size: 1140203205
+      nfiles: 65522
+    - path: data/raw/RoundaboutHD/Vehicle_statistic.xlsx
+      hash: md5
+      md5: d621d1961f19a4b70ddf2c364bae4ae6
+      size: 42108
+    - path: data/raw/RoundaboutHD/imagesc001/SCT
+      hash: md5
+      md5: 264ed375113eac4cd85fadb9a4368885.dir
+      size: 2487374
+      nfiles: 1
+    - path: data/raw/RoundaboutHD/imagesc002/SCT
+      hash: md5
+      md5: 6f4b15043244e2a44d2e3f4c408d3df4.dir
+      size: 2210923
+      nfiles: 1
+    - path: data/raw/RoundaboutHD/imagesc003/SCT
+      hash: md5
+      md5: b90aecabaa6c7cb1e036be7ef1cc9c60.dir
+      size: 2395737
+      nfiles: 1
+    - path: data/raw/RoundaboutHD/imagesc004/SCT
+      hash: md5
+      md5: 17ecad08f0cbbf436e51d7ac527f01c2.dir
+      size: 2301885
+      nfiles: 1
+    - path: src/data/load.py
+      hash: md5
+      md5: 9e0353e982bf52f2d59a15a304a3abbe
+      size: 4087
+    - path: src/data/make_dataset.py
+      hash: md5
+      md5: 62fb4d30e6ada9a0e03f6bec75447a48
+      size: 3303
+    outs:
+    - path: data/processed
+      hash: md5
+      md5: fca330a6935c781c7726d0ee3acb9854.dir
+      size: 10722371
+      nfiles: 1

@@ -2,7 +2,11 @@ stages:
   prepare:
     cmd: python -m src.data.prepare
     deps:
-      - src/data
+      - src/data/prepare.py
+      - src/data/checks.py
+      - src/data/boxes.py
+      - src/data/parked.py
+      - src/data/regions.py
       - src/common/io.py
       - src/common/config.py
       - data/raw/RoundaboutHD/imagesc001/detection/labels_GT.zip
@@ -30,3 +34,18 @@ stages:
     metrics:
       - reports/data_quality.json:
           cache: false
+  process_data:
+    cmd: python -m src.data.make_dataset
+    deps:
+      - data/raw/RoundaboutHD/RoundaboutHD_Reid_subset
+      - data/raw/RoundaboutHD/Multi_CAM_Ground_Turth.txt
+      - data/raw/RoundaboutHD/Vehicle_statistic.xlsx
+      - data/raw/RoundaboutHD/imagesc001/SCT
+      - data/raw/RoundaboutHD/imagesc002/SCT
+      - data/raw/RoundaboutHD/imagesc003/SCT
+      - data/raw/RoundaboutHD/imagesc004/SCT
+      - src/data/make_dataset.py
+      - src/data/load.py
+    outs:
+      - data/processed:
+          persist: true

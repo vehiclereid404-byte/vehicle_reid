@@ -78,7 +78,8 @@ coverage.xml
 .ipynb_checkpoints/
 
 # exclude data and trained models from source control by default
-/data/
+/data/*
+!/data/README.md
 /models/
 
 # Mac OS-specific storage files
@@ -93,3 +94,6 @@ coverage.xml
 
 # generated progress reports (PDF)
 /reports/*.pdf
+
+# Claude: local settings only (.claude/agents is shared)
+.claude/settings.local.json

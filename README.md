@@ -1,6 +1,8 @@
 vehicle_reid
 ==============================
 
+**Data:** how to get the data and use it for training → [`data/README.md`](data/README.md). Known dataset issues → [`reports/data_issues.md`](reports/data_issues.md).
+
 
 
 Instructions

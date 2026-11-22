@@ -11,8 +11,14 @@ python-dotenv>=0.5.1
 # data versioning (DagsHub DVC remote over HTTP)
 dvc
 
-# shared pipeline code (src/common)
+# shared pipeline code (src/common, prepare stage)
 numpy
 pandas
 pyyaml
 opencv-python
+
+# data inspection / ReID preparation
+pillow
+matplotlib
+openpyxl
+jupyter
