@@ -64,8 +64,71 @@ stages:
       - raw_dir
       - cameras
       - prepare.single_cam_id_offset
+      - det_split.windows
     outs:
       - outputs/reid_split/gt
     metrics:
       - reports/metrics/reid_split_gt.json:
           cache: false
+  det_split:
+    cmd: python -m src.data.det_split
+    deps:
+      - src/data/det_split.py
+      - src/data/boxes.py
+      - src/data/checks.py
+      - src/data/parked.py
+      - src/data/regions.py
+      - src/common/io.py
+      - src/common/config.py
+      - outputs/detections/gt
+      - outputs/tracks/gt
+      - outputs/eval_masks
+    params:
+      - det_split.windows
+      - det_split.min_gap
+      - det_split.frame_step
+      - prepare.frame_width
+      - prepare.frame_height
+      - prepare.n_frames
+      - prepare.match_iou
+      - cameras
+    outs:
+      - data/interim/splits
+      - data/interim/coco
+    metrics:
+      - reports/metrics/det_split_gt.json:
+          cache: false
+  frames:
+    cmd: python -m src.data.frames
+    deps:
+      - src/data/frames.py
+      - src/data/det_split.py
+      - src/common/video.py
+      - src/common/config.py
+      - data/interim/coco
+      - data/raw/RoundaboutHD/imagesc001/video.mp4
+      - data/raw/RoundaboutHD/imagesc002/video.mp4
+      - data/raw/RoundaboutHD/imagesc003/video.mp4
+      - data/raw/RoundaboutHD/imagesc004/video.mp4
+    params:
+      - det_split.frame_step
+      - det_split.jpeg_quality
+      - raw_dir
+      - cameras
+    outs:
+      - data/interim/frames:
+          cache: false
+    metrics:
+      - reports/metrics/frames_gt.json:
+          cache: false
+  calib:
+    cmd: python -m src.data.calib
+    deps:
+      - src/data/calib.py
+      - data/interim/coco
+      - outputs/reid_split/gt/crops.csv
+    params:
+      - det_split.calib_frames
+      - det_split.calib_crops
+    outs:
+      - data/interim/calib

@@ -1,9 +1,12 @@
-"""ReID split stage: an ID-disjoint train/val/test split of the RoundaboutHD ReID crops.
+"""ReID split stage: an ID-disjoint train/val/test split of the RoundaboutHD ReID crops, along the
+detection time windows (det_split.windows in params.yaml), so the whole project uses one split.
 
 Every unique crop of RoundaboutHD_Reid_subset (train, query and test folders together) is linked to
 the gt track box it was cut from, gets a vehicle id from outputs/matching/gt/global_ids.csv, and is
-put in one split by vehicle. Val and test hold only vehicles seen by 2+ cameras, with one query per
-camera; every query has a gallery crop of the same vehicle on another camera.
+put in one split by vehicle (and by group of possibly-same vehicles). Val and test hold the vehicles
+seen by 2+ cameras inside their window, with only their crops from that window and one query per
+camera; every query has a gallery crop of the same vehicle on another camera. Train holds the
+vehicles never seen in the val or test window. Other crops are `excluded`.
 
 Writes outputs/reid_split/gt/crops.csv, outputs/reid_split/gt/checks.json and
 reports/metrics/reid_split_gt.json. Format and protocol: docs/pipeline_contract.md ("ReID split").
@@ -185,31 +188,60 @@ def split_groups(vehicle_ids, pairs) -> dict[int, int]:
 
 # ---------- split ----------
 
-def assign_splits(crops: pd.DataFrame, offset: int, val_frac: float, test_frac: float,
-                  rng: np.random.Generator) -> tuple[pd.Series, pd.DataFrame]:
-    """Split vehicles. Only eligible vehicles can go to val or test: a Multi_CAM vehicle (id < offset)
-    with crops on 2+ cameras, 2+ crops on at least one camera, and alone in its split group.
-    Eligible vehicles are shuffled per number of cameras (2, 3, 4) and cut into test, val, train.
-    Returns (split per vehicle id, per-vehicle table).
+def window_of(frames, windows: dict) -> np.ndarray:
+    """Window of each 1-based frame: val, train, test (det_split.windows), or gap (between windows)."""
+    frames = np.asarray(frames)
+    out = np.full(len(frames), "gap", dtype=object)
+    for name, (first, last) in windows.items():
+        out[(frames >= first) & (frames <= last)] = name
+    return out
+
+
+def qualifying(crops: pd.DataFrame, offset: int) -> set[int]:
+    """Vehicles that can be scored on these crops: a Multi_CAM id (< offset) with crops on 2+ cameras and
+    2+ crops on at least one of them (that camera gets a query, the other one holds its cross-camera match)."""
+    per_cam = crops.groupby(["vehicle_id", "cam"]).size().groupby(level=0).agg(["size", "max"])
+    ok = (per_cam.index < offset) & (per_cam["size"] >= 2) & (per_cam["max"] >= 2)
+    return {int(v) for v in per_cam.index[ok]}
+
+
+def assign_splits(crops: pd.DataFrame, tracks: pd.DataFrame, windows: dict, offset: int) -> tuple[pd.Series, pd.DataFrame]:
+    """Split along the detection time windows, one split group at a time (tracks: gt rows with `group`).
+
+    - test: a group with a vehicle that qualifies on its test-window crops. The qualifying vehicles keep their
+      test-window crops; all other crops of the group (other windows, gaps, other vehicles) are excluded.
+    - val: the same with the val window, for the other groups. So a group in both windows is test if it
+      qualifies there, else val if it qualifies there, else excluded.
+    - excluded: every other group with a gt track row in the val or test window. It can't be scored there,
+      and it isn't trained on, because its vehicles are in an evaluation window.
+    - train: all other groups, with all their crops (train window and gaps).
+    Returns (split per crop: train, val, test or excluded; per-group table).
     """
-    v = crops.groupby("vehicle_id").agg(n_cams=("cam", "nunique"), group=("group", "first"))
-    v["max_per_cam"] = crops.groupby(["vehicle_id", "cam"]).size().groupby(level=0).max()
-    v["group_size"] = v.groupby("group").n_cams.transform("size")
-    v["eligible"] = (v.index < offset) & (v.n_cams >= 2) & (v.max_per_cam >= 2) & (v.group_size == 1)
-    split = pd.Series("train", index=v.index)
-    for _, ids in v[v.eligible].groupby("n_cams").groups.items():
-        ids = rng.permutation(np.sort(np.asarray(ids)))
-        n_test, n_val = round(len(ids) * test_frac), round(len(ids) * val_frac)
-        split.loc[ids[:n_test]] = "test"
-        split.loc[ids[n_test:n_test + n_val]] = "val"
-    return split, v
+    win = window_of(crops.frame, windows)
+    track_windows = tracks.groupby("group").frame.agg(lambda f: set(window_of(f, windows)))
+    scorable = {s: qualifying(crops[win == s], offset) for s in ("test", "val")}
+    rows = []
+    for g, members in crops.groupby("group").vehicle_id.agg(set).items():
+        seen = track_windows[g]
+        where = next((s for s in ("test", "val") if members & scorable[s]), None)
+        if where is None:
+            where = "excluded" if seen & {"val", "test"} else "train"
+        rows.append(dict(group=g, vehicles=sorted(members), windows=sorted(seen), split=where,
+                         scored=sorted(members & scorable[where]) if where in scorable else []))
+    groups = pd.DataFrame(rows).set_index("group")
+
+    group_split = crops.group.map(groups.split).to_numpy()
+    split = pd.Series(np.where(group_split == "train", "train", "excluded"), index=crops.index)
+    for s in ("val", "test"):
+        split[(group_split == s) & (win == s) & crops.vehicle_id.isin(scorable[s]).to_numpy()] = s
+    return split, groups
 
 
 def assign_roles(crops: pd.DataFrame, per_cam: int, rng: np.random.Generator) -> pd.Series:
-    """train crops -> train. In val and test, per vehicle and camera with 2+ crops, `per_cam` random
-    crops are queries; all other crops are gallery."""
-    role = pd.Series(np.where(crops.split == "train", "train", "gallery"), index=crops.index)
-    evals = crops[crops.split != "train"].sort_values(["vehicle_id", "cam", "frame"])
+    """train and excluded crops keep their split as role. In val and test, per vehicle and camera with 2+ crops,
+    `per_cam` random crops are queries; all other crops are gallery."""
+    role = pd.Series(np.where(crops.split.isin(["train", "excluded"]), crops.split, "gallery"), index=crops.index)
+    evals = crops[crops.split.isin(["val", "test"])].sort_values(["vehicle_id", "cam", "frame"])
     for _, g in evals.groupby(["vehicle_id", "cam"]):
         if len(g) >= 2:
             role.loc[rng.choice(g.index.to_numpy(), size=min(per_cam, len(g) - 1), replace=False)] = "query"
@@ -235,38 +267,82 @@ def crop_size_note(crops: pd.DataFrame) -> dict:
             "crop_w_below_256_frac": round(float((crops.w < 256).mean()), 3)}
 
 
+def window_checks(crops: pd.DataFrame, tracks: pd.DataFrame, windows: dict, offset: int) -> dict:
+    """Per evaluation window: its multi-camera vehicles (gt track rows on 2+ cameras inside it), how many of them
+    are in that ReID split, and how many vehicles seen in the window (any gt track row) are ReID train vehicles."""
+    split = crops[crops.split != "excluded"].groupby("vehicle_id").split.first()
+    tw = tracks[["vehicle_id", "cam"]].assign(window=window_of(tracks.frame, windows))
+    out = {}
+    for s in ("val", "test"):
+        seen = tw[tw.window == s]
+        cams = seen[seen.vehicle_id < offset].groupby("vehicle_id").cam.nunique()
+        multi = cams.index[cams >= 2]
+        out[f"{s}_window_multicam_vehicles"] = len(multi)
+        out[f"{s}_window_multicam_in_{s}"] = int((split.reindex(multi) == s).sum())
+        out[f"{s}_window_vehicles"] = int(seen.vehicle_id.nunique())
+        out[f"train_vehicles_in_{s}_window"] = int((split.reindex(seen.vehicle_id.unique()) == "train").sum())
+    return out
+
+
+def group_table(groups: pd.DataFrame) -> dict:
+    return {int(g): dict(vehicles=[int(v) for v in r.vehicles], windows=r.windows, split=r.split,
+                         scored=[int(v) for v in r.scored]) for g, r in groups.iterrows()}
+
+
 def main() -> None:
     params = load_params()
     p, offset = params["reid_split"], params["prepare"]["single_cam_id_offset"]
+    windows = params["det_split"]["windows"]
     raw = ROOT / params["raw_dir"]
     rng = np.random.default_rng(params["seed"])
+    glob = pd.read_csv(ROOT / "outputs" / "matching" / "gt" / "global_ids.csv")
 
     crops, hashes, n_files = scan_crops(raw / REID_DIR)
-    crops = link_to_tracks(crops, read_tracks(params["cameras"]))
+    tracks = read_tracks(params["cameras"])
+    crops = link_to_tracks(crops, tracks)
     unlinked = int(crops.track_id.isna().sum())
     keep = crops.track_id.notna().to_numpy()
     crops, hashes = crops[keep].reset_index(drop=True), hashes[keep]
     crops["track_id"] = crops.track_id.astype(int)
-    crops = add_vehicle_ids(crops, pd.read_csv(ROOT / "outputs" / "matching" / "gt" / "global_ids.csv"))
+    crops = add_vehicle_ids(crops, glob)
 
     conflicts = file_id_conflicts(crops)
     near = near_duplicate_pairs(crops, hashes, p["near_dup_bits"])
     missed = missed_link_pairs(crops, read_vehicle_stats(raw / "Vehicle_statistic.xlsx"), offset,
                                p["link_window_frames"])
-    groups = split_groups(crops.vehicle_id.unique(), list(near) + list(missed))
-    crops["group"] = crops.vehicle_id.map(groups)
+    pairs = list(near) + list(missed)
+    group_of = split_groups(crops.vehicle_id.unique(), pairs)
+    crops["group"] = crops.vehicle_id.map(group_of)
+    tracks = add_vehicle_ids(tracks, glob)
+    tracks["group"] = tracks.vehicle_id.map(group_of).fillna(tracks.vehicle_id).astype(int)  # no crops: own group
 
-    split, vehicles = assign_splits(crops, offset, p["val_frac"], p["test_frac"], rng)
-    crops["split"] = crops.vehicle_id.map(split)
+    crops["split"], groups = assign_splits(crops, tracks, windows, offset)
     crops["role"] = assign_roles(crops, p["queries_per_cam"], rng)
     crops = crops.sort_values(["split", "vehicle_id", "cam", "frame"], kind="stable").reset_index(drop=True)
 
-    # checks: one split per vehicle and per group, every query has a cross-camera match
-    assert crops.groupby("vehicle_id").split.nunique().max() == 1
-    assert crops.groupby("group").split.nunique().max() == 1
+    # checks: one split per vehicle and per group; crops only from their own window (train: train window or gaps);
+    # no vehicle seen in the val or test window is trained on; no possibly-same pair is scored under two labels;
+    # every query has a cross-camera match
+    kept = crops[crops.split != "excluded"]
+    assert kept.groupby("vehicle_id").split.nunique().max() == 1
+    assert kept.groupby("group").split.nunique().max() == 1
+    win = window_of(kept.frame, windows)
+    assert np.where(kept.split == "train", np.isin(win, ["train", "gap"]), win == kept.split).all()
+    by_window = window_checks(crops, tracks, windows, offset)
+    assert by_window["train_vehicles_in_val_window"] == 0 and by_window["train_vehicles_in_test_window"] == 0
+    vsplit = kept.groupby("vehicle_id").split.first()
+    both_scored = [(a, b) for a, b in pairs if vsplit.get(a) in ("val", "test") and vsplit.get(b) in ("val", "test")]
+    assert not both_scored, f"possibly-same vehicles scored under two labels: {both_scored}"
+    cross_pairs = sum(a in vsplit and b in vsplit and vsplit[a] != vsplit[b] for a, b in pairs)
     no_match = queries_without_match(crops)
     assert no_match == 0, f"{no_match} queries without a cross-camera gallery crop"
-    cross_near = sum(split[a] != split[b] for a, b in near)
+
+    scored = crops.vehicle_id.isin(vsplit.index[vsplit.isin(["val", "test"])])
+    reason = pd.Series(np.select(
+        [crops.split != "excluded", scored, crops.group.map(groups.split).isin(["val", "test"])],
+        ["", "scored_vehicle_other_window", "other_vehicle_of_scored_group"], "group_in_eval_window"))
+    straddle = groups[groups.windows.map(lambda w: {"val", "test"} <= set(w))]
+    multi = groups[groups.vehicles.map(len) > 1]
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     crops[COLUMNS].to_csv(OUT_DIR / "crops.csv", index=False, lineterminator="\n")
@@ -274,12 +350,13 @@ def main() -> None:
     metrics = {"files": n_files, "unique_crops": len(crops) + unlinked,
                "byte_identical_dropped": n_files - len(crops) - unlinked, "unlinked_dropped": unlinked,
                "crops_size_off_1px": int((crops.size_off == 1).sum()),
-               "vehicles": int(crops.vehicle_id.nunique()), "multi_cam_vehicles": int((vehicles.index < offset).sum()),
-               "eligible_vehicles": int(vehicles.eligible.sum()),
+               "vehicles": int(crops.vehicle_id.nunique()),
+               "multi_cam_vehicles": int(crops.loc[crops.vehicle_id < offset, "vehicle_id"].nunique()),
                "file_ids_with_2plus_vehicles": len(conflicts["file_id_to_vehicles"]),
                "vehicles_with_2plus_file_ids": len(conflicts["vehicle_to_file_ids"]),
                "near_dup_pairs": len(near), "missed_link_pairs": len(missed),
-               "near_dup_pairs_across_splits": int(cross_near), "queries_without_cross_cam_match": no_match}
+               "possibly_same_pairs_across_splits": int(cross_pairs), "queries_without_cross_cam_match": no_match,
+               "groups_in_val_and_test_window": len(straddle), **by_window}
     for s in ["train", "val", "test"]:
         part = crops[crops.split == s]
         metrics[f"{s}_ids"] = int(part.vehicle_id.nunique())
@@ -287,29 +364,33 @@ def main() -> None:
         if s != "train":
             metrics[f"{s}_query"] = int((part.role == "query").sum())
             metrics[f"{s}_gallery"] = int((part.role == "gallery").sum())
+    metrics["excluded_crops"] = int((crops.split == "excluded").sum())
+    metrics["excluded_only_ids"] = int(crops.vehicle_id.nunique() - kept.vehicle_id.nunique())
+    metrics |= {f"excluded_crops.{k}": int(v) for k, v in reason[reason != ""].value_counts().sort_index().items()}
     metrics |= crop_size_note(crops)
     METRICS.parent.mkdir(parents=True, exist_ok=True)
     METRICS.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8", newline="\n")
 
-    multi_groups = vehicles[vehicles.group_size > 1].groupby("group").groups
     checks = {**conflicts,
               "near_duplicate_pairs": [dict(a=a, b=b, cam=c, bits=d) for (a, b), (c, d) in sorted(near.items())],
               "missed_link_pairs": [dict(single=a if a >= offset else b, multi=b if a >= offset else a, cam=c, gap=g)
                                     for (a, b), (c, g) in sorted(missed.items())],
-              "groups_kept_in_train": {int(k): [int(x) for x in ids] for k, ids in multi_groups.items()},
+              "groups": group_table(multi), "groups_in_val_and_test_window": group_table(straddle),
               "identity_fixes": {"same_vehicle": {str(k): v for k, v in SAME_VEHICLE.items()},
                                  "track_vehicle": {f"{c}/{t}": v for (c, t), v in TRACK_VEHICLE.items()}}}
     (OUT_DIR / "checks.json").write_text(json.dumps(checks, indent=1) + "\n", encoding="utf-8", newline="\n")
 
     print(f"{n_files} files -> {metrics['unique_crops']} unique crops, {unlinked} unlinked, "
-          f"{metrics['vehicles']} vehicles ({metrics['multi_cam_vehicles']} multi-camera, "
-          f"{metrics['eligible_vehicles']} eligible for val/test)")
+          f"{metrics['vehicles']} vehicles ({metrics['multi_cam_vehicles']} multi-camera)")
     print(f"file ids covering 2+ vehicles: {conflicts['file_id_to_vehicles']}")
     print(f"vehicles with 2+ file ids: {conflicts['vehicle_to_file_ids']}")
-    print(f"{len(near)} near-duplicate and {len(missed)} missed-link vehicle pairs -> "
-          f"{len(multi_groups)} groups ({int((vehicles.group_size > 1).sum())} vehicles) kept in train")
+    print(f"{len(near)} near-duplicate and {len(missed)} missed-link vehicle pairs -> {len(multi)} groups "
+          f"({int(multi.vehicles.map(len).sum())} vehicles); their splits: {multi.split.value_counts().to_dict()}")
+    print(f"groups in both the val and the test window: {group_table(straddle)}")
     print(pd.crosstab(crops.split, crops.role, margins=True).to_string())
     print(crops.groupby("split").vehicle_id.nunique().to_string())
+    print("excluded crops: " + ", ".join(f"{k[15:]} {v}" for k, v in metrics.items() if k.startswith("excluded_crops.")))
+    print("windows: " + ", ".join(f"{k} {v}" for k, v in by_window.items()))
 
 
 if __name__ == "__main__":

@@ -27,9 +27,22 @@ prepare:
     - {cam: cam03, mc_id: 553, from_frame: 339, to_frame: 599, new_id: null, issue: D24,
        reason: "boxes are SCT track 29, a street sweeper; 553 is the silver Subaru (cam03 track 293)"}
 
+det_split:                   # detection splits, frames and Hailo calibration lists (src/data/det_split.py, frames.py, calib.py)
+  # Same 1-based frame window on every camera (the videos are synchronised); frames between windows are buffer
+  # gaps and belong to no split. val first and test last, so val and test share no vehicle (trips last <= 6 min).
+  windows:
+    val: [1, 1350]             # 90 s
+    train: [1801, 6750]        # 5.5 min
+    test: [7201, 9000]         # 2 min: long enough for cross-camera trips (median first-to-last sighting 87 s)
+  min_gap: 450                 # frames between windows (30 s): longer than 98.4% of gt tracks
+  frame_step: 10               # detection frames: window frames with (frame - 1) % frame_step == 0
+  jpeg_quality: 95             # extracted frames, about 1 MB each
+  calib_frames: 1024           # detection calibration frames from train, the same number per camera, spread in time
+  calib_crops: 1024            # ReID calibration crops (crops.csv split == train), per camera and crop-size quartile
+
 reid_split:                  # ID-disjoint ReID split of the ReID crops (src/data/reid_split.py, uses `seed`)
-  val_frac: 0.15             # share of the eligible multi-camera vehicles in val
-  test_frac: 0.40            # ... and in test; the rest go to train with every other vehicle
+  # Split along det_split.windows: val/test = the multi-camera vehicles of that window, with only that window's
+  # crops; train = vehicles never seen in the val or test window (train window and gap crops).
   queries_per_cam: 1         # query crops per val/test vehicle and camera (cameras with 2+ crops)
   near_dup_bits: 24          # crops of two vehicles on one camera within this many of 256 dhash bits -> same split group
   link_window_frames: 1500   # possible missed Multi_CAM link: same make+model, unseen neighbouring camera, gap <= this

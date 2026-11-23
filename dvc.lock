@@ -223,8 +223,8 @@ stages:
       size: 805
     - path: src/data/reid_split.py
       hash: md5
-      md5: b4e6cd96b6be84868e20dbdced3b63b0
-      size: 17320
+      md5: 229adb8f674d021301d71e67632fdb78
+      size: 22601
     params:
       params.yaml:
         cameras:
@@ -232,11 +232,19 @@ stages:
         - cam02
         - cam03
         - cam04
+        det_split.windows:
+          val:
+          - 1
+          - 1350
+          train:
+          - 1801
+          - 6750
+          test:
+          - 7201
+          - 9000
         prepare.single_cam_id_offset: 10000
         raw_dir: data/raw/RoundaboutHD
         reid_split:
-          val_frac: 0.15
-          test_frac: 0.4
           queries_per_cam: 1
           near_dup_bits: 24
           link_window_frames: 1500
@@ -244,10 +252,180 @@ stages:
     outs:
     - path: outputs/reid_split/gt
       hash: md5
-      md5: f3f078e82f93304555356f456a944fc4.dir
-      size: 9047426
+      md5: 45f7b3782cf1637c1e1649b69a385c35.dir
+      size: 9176093
       nfiles: 2
     - path: reports/metrics/reid_split_gt.json
       hash: md5
-      md5: 14927a2701338403ddc059a1a7e222c2
-      size: 867
+      md5: 8ff5e0f913b654d1f0a4176ab0f73341
+      size: 1379
+  det_split:
+    cmd: python -m src.data.det_split
+    deps:
+    - path: outputs/detections/gt
+      hash: md5
+      md5: a5b75a9061ec89c5e06ceb652f371b29.dir
+      size: 20302066
+      nfiles: 4
+    - path: outputs/eval_masks
+      hash: md5
+      md5: 1d6f9872d6f9716f1a956eecb2e12812.dir
+      size: 5692
+      nfiles: 2
+    - path: outputs/tracks/gt
+      hash: md5
+      md5: da91d61d45c353fbb1ba172af27a0092.dir
+      size: 9988346
+      nfiles: 4
+    - path: src/common/config.py
+      hash: md5
+      md5: bee3de04b273acda0c1b33edbaf34c7c
+      size: 805
+    - path: src/common/io.py
+      hash: md5
+      md5: fca467b93c278ce51ff1443866810331
+      size: 1414
+    - path: src/data/boxes.py
+      hash: md5
+      md5: 7bacbe276523b631571e6a8579e18eaa
+      size: 2295
+    - path: src/data/checks.py
+      hash: md5
+      md5: 7a9eae84292340a3b9815e2d524fca6b
+      size: 16829
+    - path: src/data/det_split.py
+      hash: md5
+      md5: 914d3e8ff89d340adfaf44e85f052626
+      size: 9062
+    - path: src/data/parked.py
+      hash: md5
+      md5: dec42683a1e9d38050a27bc8069c7a6e
+      size: 1685
+    - path: src/data/regions.py
+      hash: md5
+      md5: 24ba92ca46c78a491b408180180b80cc
+      size: 4131
+    params:
+      params.yaml:
+        cameras:
+        - cam01
+        - cam02
+        - cam03
+        - cam04
+        det_split.frame_step: 10
+        det_split.min_gap: 450
+        det_split.windows:
+          val:
+          - 1
+          - 1350
+          train:
+          - 1801
+          - 6750
+          test:
+          - 7201
+          - 9000
+        prepare.frame_height: 2160
+        prepare.frame_width: 3840
+        prepare.match_iou: 0.5
+        prepare.n_frames: 9000
+    outs:
+    - path: data/interim/coco
+      hash: md5
+      md5: a9b132ea525b329baebe47f58497f9b3.dir
+      size: 13530319
+      nfiles: 6
+    - path: data/interim/splits
+      hash: md5
+      md5: 24410748a1cfa8b2c4f425669276beb6.dir
+      size: 352073
+      nfiles: 4
+    - path: reports/metrics/det_split_gt.json
+      hash: md5
+      md5: b05720052b84427ea691cbce36feb298
+      size: 7863
+  frames:
+    cmd: python -m src.data.frames
+    deps:
+    - path: data/interim/coco
+      hash: md5
+      md5: a9b132ea525b329baebe47f58497f9b3.dir
+      size: 13530319
+      nfiles: 6
+    - path: data/raw/RoundaboutHD/imagesc001/video.mp4
+      hash: md5
+      md5: 07283e1244e146da85f99990b5cb5371
+      size: 2258398838
+    - path: data/raw/RoundaboutHD/imagesc002/video.mp4
+      hash: md5
+      md5: 7f8f1aa052b4c8f98e0c7c1d374bba12
+      size: 1248996690
+    - path: data/raw/RoundaboutHD/imagesc003/video.mp4
+      hash: md5
+      md5: 76506f2c51945f0b8f7020246e4bceae
+      size: 1945000914
+    - path: data/raw/RoundaboutHD/imagesc004/video.mp4
+      hash: md5
+      md5: f5ce222283e1432822bee9b7bd6a8073
+      size: 1435846191
+    - path: src/common/config.py
+      hash: md5
+      md5: bee3de04b273acda0c1b33edbaf34c7c
+      size: 805
+    - path: src/common/video.py
+      hash: md5
+      md5: a906abb317400d52f2c0e64fcb40e743
+      size: 1028
+    - path: src/data/det_split.py
+      hash: md5
+      md5: 914d3e8ff89d340adfaf44e85f052626
+      size: 9062
+    - path: src/data/frames.py
+      hash: md5
+      md5: 807f18fc588183ce2996cf728db5b840
+      size: 6837
+    params:
+      params.yaml:
+        cameras:
+        - cam01
+        - cam02
+        - cam03
+        - cam04
+        det_split.frame_step: 10
+        det_split.jpeg_quality: 95
+        raw_dir: data/raw/RoundaboutHD
+    outs:
+    - path: data/interim/frames
+      hash: md5
+      md5: 785e936519bc64c2bf88ecd28665bd03.dir
+      size: 5948469273
+      nfiles: 6485
+    - path: reports/metrics/frames_gt.json
+      hash: md5
+      md5: 563c863164d1fe4676b840e7554aab54
+      size: 333
+  calib:
+    cmd: python -m src.data.calib
+    deps:
+    - path: data/interim/coco
+      hash: md5
+      md5: a9b132ea525b329baebe47f58497f9b3.dir
+      size: 13530319
+      nfiles: 6
+    - path: outputs/reid_split/gt/crops.csv
+      hash: md5
+      md5: a008aa09a142779c46e25d55dca43e0c
+      size: 9166781
+    - path: src/data/calib.py
+      hash: md5
+      md5: 8df8407457eb8ba110563c35c31d39b1
+      size: 3768
+    params:
+      params.yaml:
+        det_split.calib_crops: 1024
+        det_split.calib_frames: 1024
+    outs:
+    - path: data/interim/calib
+      hash: md5
+      md5: 928f32e20500560fc1fc056c05b26cb5.dir
+      size: 121504
+      nfiles: 2

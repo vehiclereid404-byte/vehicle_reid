@@ -14,7 +14,10 @@ All deployed models must run on a **Raspberry Pi 5 + Hailo-8L**. See
 data/raw/RoundaboutHD ─ prepare ─► data/interim/          (cleaned GT, frame subsets, splits)
                                    outputs/*/gt/          (ground truth in pipeline formats)
                                    outputs/eval_masks/    (tracking scoring masks)
-RoundaboutHD_Reid_subset ─ reid_split ─► outputs/reid_split/gt/   (ID-disjoint ReID train/val/test split)
+RoundaboutHD_Reid_subset ─ reid_split ─► outputs/reid_split/gt/   (ID-disjoint ReID split along the det_split windows)
+outputs/*/gt ─ det_split ─► data/interim/splits/, data/interim/coco/   (time windows, detection labels)
+videos ─ frames ─► data/interim/frames/                                 (detection frames + YOLO labels, not in DVC)
+coco + reid_split ─ calib ─► data/interim/calib/                        (Hailo int8 calibration lists)
 videos ─ detect ─► outputs/detections/<run>/<cam>.csv
        ─ track  ─► outputs/tracks/<run>/<cam>.csv
        ─ reid   ─► outputs/reid/<run>/<cam>.npz
@@ -56,6 +59,11 @@ you switch `input:` in `params.yaml` to a real run.
 | `outputs/eval_masks/skip_frames.csv` | `cam,frame`: frames dropped from tracking scoring | prepare |
 | `outputs/eval_masks/ignore_regions.json` | `{cam: [polygon, ...]}`, polygon = `[[x, y], ...]` in full-frame pixels | prepare |
 | `outputs/reid_split/gt/crops.csv` | `path,cam,frame,track_id,global_id,vehicle_id,group,file_id,official,split,role,w,h`, one row per ReID crop (see ReID split) | reid_split |
+| `data/interim/splits/{train,val,test}.txt` | `cam,frame`: every frame of the split's time window, on all 4 cameras (see Detection splits) | det_split |
+| `data/interim/splits/windows.csv` | `split,first_frame,last_frame` (the same on every camera) | det_split |
+| `data/interim/coco/{split}.json`, `{split}_1cls.json` | COCO detection labels of the detection frames (4 classes / 1 class) | det_split |
+| `data/interim/frames/<cam>/<frame:06d>.jpg` (+ `.txt`) | extracted detection frame, full 3840×2160 (+ YOLO labels); `index.csv`, `yolo.yaml`, `yolo_{split}.txt` | frames |
+| `data/interim/calib/det_frames.txt`, `reid_crops.txt` | repo-relative image paths for Hailo int8 calibration (train only) | calib |
 
 Read and write these with `src/common/io.py`, so the column checks stay in one place.
 
@@ -86,6 +94,7 @@ Read and write these with `src/common/io.py`, so the column checks stay in one p
     So `global_id ≥ 10000` means a vehicle seen by one camera only.
 - **Parked vehicles:** SCT has none, but `labels_GT` and every detector do.
   Tracking scoring first drops the predicted tracks that `src/data/parked.py:parked_track_ids` flags, the same way for every tracker.
+  Detection scoring ignores parked boxes in its main score (see Detection scoring).
   - A track is parked if it spans ≥ 150 frames (10 s) and its box centre moves < 30 px.
     Motion is measured as the diagonal of the 5th–95th percentile range of the centre.
   - On the data it flags 0 of 1,044 SCT tracks. Its 10-s minimum keeps short pieces of slow traffic safe.
@@ -94,7 +103,7 @@ Read and write these with `src/common/io.py`, so the column checks stay in one p
     The ignore region (below) now drops most of them from tracking scoring.
 - **Tracking scoring masks** (`outputs/eval_masks/`, written by prepare). The tracking scorer applies them with
   `src/evaluation/masks.py:apply_masks(df, cam)` to gt and predicted rows alike, after dropping parked tracks.
-  Detection scoring doesn't use them.
+  Detection scoring uses only the ignore region, for its `moving_in_region` score (see Detection scoring).
   - **Skip frames (D11):** frames with no SCT rows (cam02 2946, cam04 4099–4229) are dropped.
   - **Ignore region (D23):** one region per camera, a list of polygons around the area SCT annotates.
     A row is dropped if its box bottom-centre `(x + w/2, y + h)` is outside every polygon (on the edge counts as inside).
@@ -110,7 +119,9 @@ Read and write these with `src/common/io.py`, so the column checks stay in one p
 ## ReID split (`reid_split`, written by `python -m src.data.reid_split`)
 
 An ID-disjoint train/val/test split of all ReID crops (official train, query and test folders together),
-for training and scoring ReID models. Settings: `reid_split` and `seed` in `params.yaml`.
+for training and scoring ReID models. It follows the detection time windows (see Detection splits), so the
+whole project uses one split: a ReID test vehicle is a multi-camera vehicle of the test window, and no vehicle seen
+in the val or test window is trained on. Settings: `reid_split`, `det_split.windows` and `seed` in `params.yaml`.
 
 - `outputs/reid_split/gt/crops.csv`, one row per unique image (byte-identical copies are dropped: 650 of 65,522 files):
   - `path` (repo-relative, forward slashes), `cam`, `frame` (1-based SCT frame = file-name frame + 1),
@@ -120,9 +131,10 @@ for training and scoring ReID models. Settings: `reid_split` and `seed` in `para
   - `file_id`: the id in the file name, a separate numbering (never equal to `global_id`).
   - `official`: the official folder: `train`, `query`, `gallery` (= `test_images`), or `query+gallery` /
     `train+query` for byte-identical copies. Use it to score the paper's protocol.
-  - `split` (`train`, `val`, `test`), `role` (`train`, `query`, `gallery`), `w`, `h` (crop size in pixels).
-  - LF line endings. Also written: `outputs/reid_split/gt/checks.json` (file-id conflicts, grouped pairs) and
-    `reports/metrics/reid_split_gt.json` (counts).
+  - `split` (`train`, `val`, `test`, `excluded`), `role` (`train`, `query`, `gallery`, `excluded`), `w`, `h`
+    (crop size in pixels). `excluded` crops are in no split: never train or score on them.
+  - LF line endings. Also written: `outputs/reid_split/gt/checks.json` (file-id conflicts, grouped pairs, groups with
+    their windows and split, groups in both the val and the test window) and `reports/metrics/reid_split_gt.json` (counts and checks).
 - **Linking:** each crop is `img[int(y1):int(y2), int(x1):int(x2)]` of an SCT box at frame (file-name frame + 1),
   checked on the video pixels. Its size equals that box's integer size for 64,871 of 64,872 crops (one is 1 px off).
   22 crops fit two same-size boxes in their frame; the track that the file id's other crops link to is used (checked on the video).
@@ -135,28 +147,176 @@ for training and scoring ReID models. Settings: `reid_split` and `seed` in `para
     vehicle on two trips, see Dataset facts, and also some look-alikes), or
   - a single-camera vehicle may be a missed Multi_CAM link of a multi-camera one: same make and model in
     `Vehicle_statistic.xlsx`, on a neighbouring camera the multi-camera vehicle is not seen on, ≤ `link_window_frames` (1,500) apart.
-  - Vehicles in a group of 2+ stay in train (17 + 25 pairs → 33 groups, 75 vehicles), so no near-duplicate or
-    possible same vehicle crosses splits and none is scored under two labels.
-- **Eligible for val/test:** a Multi_CAM vehicle (`vehicle_id` < 10000) with crops on ≥ 2 cameras, ≥ 2 crops on at least one
-  camera, alone in its group (263 of 310). Eligible vehicles are shuffled (`seed`) within each number of cameras (2, 3, 4):
-  40% test, 15% val, the rest train with every other vehicle.
+  - 17 + 25 pairs → 33 groups (75 vehicles). A group is split as one unit (below), so no near-duplicate or possible
+    same vehicle is on two sides, and at most the members that qualify in one window are scored (no pair is scored
+    under two labels; checked).
+- **Split along the time windows** (`src/data/reid_split.py:assign_splits`; a crop's window is that of its frame):
+  - A vehicle *qualifies* in a window if it is a Multi_CAM vehicle (`vehicle_id` < 10000) with crops in that window on
+    ≥ 2 cameras and ≥ 2 crops on at least one of them.
+  - **test:** a group with a vehicle that qualifies in the test window. Its qualifying vehicles keep their test-window
+    crops; every other crop of the group (other windows, gaps, other vehicles of the group) is `excluded`.
+  - **val:** the same with the val window, for the remaining groups. So a group seen in both the val and the test window
+    goes to test if it qualifies there, else to val if it qualifies there, else it is excluded. There are 3 such groups:
+    509 and 629 go to test (only 741 and 629 are scored; the rest of each group, including its val-window vehicles,
+    is excluded) and 682 (the BMW i3) to val (its cam03 and cam04 crops are excluded).
+  - **excluded:** every other group with a gt track row in the val or test window (single-camera vehicles, and vehicles
+    seen there by one camera only, such as trips across a gap). They can't be scored there, and they are not trained
+    on, because they are in an evaluation window.
+  - **train:** every other group, with all its crops: train window and gaps (frames 1351–1800, 6751–7200).
+  - Checked: the 76 multi-camera vehicles of the test window are the 76 test vehicles, and the 40 of the val window
+    are the 40 val vehicles (counted on `vehicle_id`; on `global_id` val has 39). 0 of the 151 vehicles seen in the test
+    window (any gt track row) and 0 of the 124 seen in the val window are train vehicles.
 - **Query and gallery:** in val and test, for each vehicle and each camera with ≥ 2 crops, one random (seeded) crop is the
   query; all other crops of the split are gallery. There are no distractor vehicles.
 - **Protocol:** each query ranks the gallery of its own split. Gallery crops with the same `vehicle_id` and the same `cam`
   as the query are ignored. Report mAP and CMC Rank-1/5/10 over all queries. Every query has a cross-camera match (checked).
-- **Counts (seed 42):**
+- **Counts (seed 42)**, with the earlier random ID-disjoint split (git history before the time alignment) for comparison:
 
-  | split | vehicles | query | gallery or train crops |
-  |---|---|---|---|
-  | train | 366 (166 Multi_CAM, 200 single-camera) | – | 39,417 |
-  | val | 39 | 105 | 6,953 |
-  | test | 105 | 284 | 18,113 |
+  | split | vehicles | query | gallery or train crops | earlier: vehicles / query / crops |
+  |---|---|---|---|---|
+  | train | 225 (125 Multi_CAM, 100 single-camera) | – | 27,798 (1,886 from the gaps) | 366 / – / 39,417 |
+  | val | 40 (all on 2 cameras) | 80 | 4,895 | 39 / 105 / 6,953 |
+  | test | 76 (64 on 2 cameras, 12 on 3) | 164 | 9,874 | 105 / 284 / 18,113 |
+  | excluded | 169 vehicles have no crop left | – | 22,061 | – |
+
+  Excluded crops: 14,987 of groups in an evaluation window that can't be scored there, 5,026 of val/test vehicles outside
+  their window, 2,048 of the other vehicles of a val/test group. Putting the train-window and gap crops of the first
+  kind back in train would add 64 vehicles (8,321 crops), but those vehicles are seen in the val or test window.
+  Scores on this split are not comparable with the earlier one: test vehicles are seen by fewer cameras (none by 4),
+  and the gallery is about half the size (9,874 vs 18,113 crops; 130 vs 172 per vehicle).
 
 - **Crop size vs the 256×128 Hailo ReID input:** the median crop is 160 × 101 px (w × h); w/h has median 1.56
   (10–90%: 1.1–2.4). 64% of crops are under 128 px tall and 75% under 256 px wide, so most are upscaled at any of these sizes.
   256×128 as H × W (portrait, the person-ReID shape of Hailo's RepVGG-A0 model) squeezes a median vehicle's width about 3×
   relative to its height. W × H = 256 × 128 (landscape, same pixel count and cost) fits the vehicles better;
   256 × 256 doubles the cost. The reid stage picks one and scores fp32 and int8 at that size.
+
+## Detection splits (`det_split`, `frames`, `calib`)
+
+Settings: `det_split` in `params.yaml`. Code: `src/data/det_split.py`, `frames.py`, `calib.py`.
+
+- **Time windows, the same 1-based frames on all 4 cameras** (the videos are synchronised):
+
+  | split | frames | length | share |
+  |---|---|---|---|
+  | val | 1–1350 | 90 s | 15% |
+  | gap | 1351–1800 | 30 s | 5% |
+  | train | 1801–6750 | 5.5 min | 55% |
+  | gap | 6751–7200 | 30 s | 5% |
+  | test | 7201–9000 | 2 min | 20% |
+
+  - **Gaps of 450 frames (30 s)**, longer than 98.4% of gt tracks (95th percentile 366 frames, 99th 483).
+    A moving vehicle in view at the end of one window has left before the next starts: on average 0.14 gt tracks
+    per camera cross a 450-frame gap, against 26 with no gap. Gap frames belong to no split.
+  - **test is 2 min, not 15%,** because tracking, matching and OD are scored on it. A multi-camera vehicle's first
+    and last sighting are a median 87 s apart (90th percentile 3 min). The test window holds 76 multi-camera vehicles
+    seen by 2+ cameras inside it (98 cross-camera track pairs); the last 1,350 frames would hold 57 (59 pairs).
+  - **val first, test last:** both gaps sit next to train, and val and test are 6.5 min apart, so they share one
+    vehicle (global id 682, a liveried BMW i3 in val on cam01–02 and in test on cam04; it stops for about 5 min
+    between cam02 and cam03, checked on the crops). Next to each other they would share about 44. test comes after
+    train, as in deployment. Train shares 45 vehicles with val and 49 with test, all on other cameras
+    (cross-camera trips cross the gaps; no vehicle is on the same camera in two windows). The ReID split trains on none
+    of them and puts 682 in val (see ReID split).
+  - The D11 frames (cam02 2946, cam04 4099–4229) are in train. `labels_GT` has boxes there, so detection uses them;
+    val and test have no skipped frames.
+  - Parked vehicles (D04) are the same cars in every window: they are about half the boxes of each split.
+    No time split can separate them; report detection scores on moving boxes too (`state`, below).
+  - `labels_GT` is incomplete in dense parking lots: there it keeps exactly the YOLOv12x boxes of `labels_xy`
+    (confidence ≥ 0.3), so distant parked cars that YOLOv12x missed have no box. Worst on cam02 (the dealership lot,
+    right side: about a dozen of several dozen cars are boxed), also on cam03 (lots behind the roundabout).
+    A detector that finds them is charged false positives (`reports/figures/step3_*.jpg`).
+- **Detection frames:** window frames with `(frame - 1) % frame_step == 0` (frames 1, 11, 21, …; `frame_step` 10),
+  extracted to `data/interim/frames/<cam>/<frame:06d>.jpg`: full 3840×2160, JPEG quality 95, read sequentially
+  with `src/common/video.py:iter_frames`: 3,240 frames (810 per camera), 5.9 GB, 73–90 s per camera.
+  Not in the DVC cache or remote (`cache: false`); rebuild with `dvc repro frames` (needs the videos).
+  `index.csv` lists `cam,frame,split,path,bytes,luma`. Checked: ReID crops match the same box cut from the
+  extracted frame f (mean difference 3 grey levels, against 20–28 at f ± 1); `reports/figures/step3_*.jpg`
+  (`python -m src.visualization.det_frames`).
+- **Labels of the detection frames** (from `outputs/detections/gt`, all `labels_GT` boxes, parked included):
+  - `data/interim/coco/{split}.json`: COCO. `file_name` = `<cam>/<frame:06d>.jpg`, relative to `data/interim/frames`;
+    `image_id` = camera number × 100000 + frame (cam02 frame 11 → 200011); `bbox` = contract `x, y, w, h`;
+    categories = COCO ids 2 car, 3 motorcycle, 5 bus, 7 truck; `iscrowd` 0. Each annotation has a `state`:
+    `moving_sct` (has a gt track box, IoU ≥ 0.5), `parked` (no track box, flagged by `src/data/parked.py` after linking
+    boxes with `checks.link_boxes`) or `moving_bg` (no track box, not parked: background traffic).
+  - `{split}_1cls.json`: the same boxes, all category 2 `"vehicle"` (class-agnostic, as detection scoring is, D05).
+  - YOLO: `data/interim/frames/<cam>/<frame:06d>.txt` next to each image, `class cx cy w h` normalised, class
+    0 car, 1 motorcycle, 2 bus, 3 truck. `data/interim/frames/yolo.yaml` (absolute `path` of the machine that ran
+    the stage, `yolo_{split}.txt` image lists) works for ultralytics and the YOLOv5–v9 repos; for 1 class
+    train with `single_cls=True`. Labels are found next to the images because no folder in the path is called `images`.
+- **Counts (detection frames, all cameras):**
+
+  | split | images | boxes | per image | moving_sct | moving_bg | parked | car | truck | bus | moto | box h median |
+  |---|---|---|---|---|---|---|---|---|---|---|---|
+  | train | 1,980 | 31,725 | 16.0 | 12,594 | 3,185 | 15,946 | 27,606 | 4,108 | 10 | 1 | 49 px |
+  | val | 540 | 8,612 | 15.9 | 3,265 | 1,116 | 4,231 | 7,482 | 1,127 | 3 | 0 | 49 px |
+  | test | 720 | 11,623 | 16.1 | 4,516 | 1,451 | 5,656 | 10,092 | 1,529 | 2 | 0 | 49 px |
+
+  Per camera: `reports/metrics/det_split_gt.json`. cam04 has a third of the parked boxes of the others (10 vs 18
+  boxes per image). Lighting is flat (overcast; mean grey level 141–147 of 255 per camera over the 10 min).
+- **How later stages use the windows.** The `gt` runs stay full-length (frames 1–9000).
+  - detection: train on train, choose models and thresholds on val, report mAP on test, with
+    `src/evaluation/det_eval.py` on the split's detection frames (see Detection scoring). A detector that runs on
+    the whole video is scored on those frames too.
+  - tracking, matching, OD: run on the whole video (or from the window start), tune on val, score on test only:
+    keep gt and predicted rows with `frame` in the window, after the parked filter and the masks (tracks crossing the
+    window edge are cut there). For matching and OD, the gt is the gt tracks (and their `global_id`s) that have a row in
+    the window. Read a window with `src/data/det_split.py:read_split(split)` (`cam,frame`).
+  - reid: trains on `split == train` of `outputs/reid_split/gt/crops.csv` and scores on its val/test queries. That split
+    follows the windows (see ReID split): the ReID test vehicles are the 76 multi-camera vehicles of the test window, and
+    no vehicle seen in the val or test window is a ReID train vehicle, so end-to-end matching on the test window
+    contains no vehicle the ReID model was trained on.
+- **Calibration sets (`calib`, train only):**
+  - `data/interim/calib/det_frames.txt`: 1,024 train detection frames, 256 per camera, evenly spaced over the train
+    window (every 20th frame).
+  - `data/interim/calib/reid_crops.txt`: 1,024 ReID crops with `split == train`, 64 per camera and crop-area
+    quartile, evenly spaced in time (200 of the 225 train vehicles; median 158 × 102 px, all train crops 158 × 101).
+    Like all ReID train crops, they come from the train window and the gaps.
+  - The export step (`src/<stage>/<name>_export.py`) owns the preprocessing and must give the DFC exactly the
+    tensor the HEF sees on the Pi: RGB, uint8 0–255 if normalisation is folded into the HEF.
+    Detection: the deployed resize, letterbox (e.g. 3840×2160 → 640×360, padded to 640×640) or tiling; with
+    tiling, calibrate on tiles (all or a random subset) of these frames. ReID: resize each crop to 256 wide ×
+    128 high (stretch, no letterbox, as in training).
+
+## Detection scoring (`src/evaluation/det_eval.py`)
+
+```
+python -m src.evaluation.det_eval --run <run> --split test [--extra fps=12.5 --extra model_mb=24]
+```
+scores `outputs/detections/<run>/<cam>.csv` and writes `reports/metrics/det_<run>_<split>.json`.
+From code: `score_detections(preds, split, extra=...)`, `preds` = `cam` + DET_COLS.
+
+- **Frames:** the split's detection frames, the images of `data/interim/coco/{split}_1cls.json` (every 10th frame of
+  the window: 540 val, 720 test). Rows on other frames are ignored; a detection frame with no rows has no detections.
+- **Class-agnostic (D05):** every box is "vehicle" and `cls` is ignored. pycocotools `COCOeval`, bbox,
+  maxDets 100 (images have at most 28 gt boxes).
+- **Two scores:**
+  - `all`: every `labels_GT` box, parked included: COCO mAP@[.5:.95] (`AP`), `AP50`, `AP75`, `AR` (AR@100).
+    Compare this one with the paper. Boxes missing in dense parking lots (see Detection splits) cost it precision.
+  - `moving_in_region`, **the main score** (the OD counts need only moving vehicles):
+    - **target** gt boxes: `state` is not `parked` and the bottom-centre `(x + w/2, y + h)` is inside the camera's ignore
+      region (`outputs/eval_masks/ignore_regions.json`, the test of `masks.py`). Test: 5,116 of 11,623 boxes; val: 3,586 of 8,612.
+    - every other gt box (parked, or bottom-centre outside the region) is an **ignore box**: a detection with
+      IoU ≥ 0.5 on one, and no target box of its own, is neither a hit nor a false positive, at every IoU threshold.
+      Target boxes are matched first. (pycocotools' own crowd rule compares intersection over the detection's area with
+      each threshold, so a detection on a parked car would become a false positive at IoU .85–.95;
+      `det_eval.IgnoreEval` replaces it.)
+    - detections whose bottom-centre is outside the region are dropped.
+    - The region holds almost no parked boxes (35 of 5,656 in test, 0 in val): mostly the region does the work.
+      Ignore boxes outside it matter only at its edge (a detection just inside, its gt box just outside).
+- **Breakdowns:** per camera and per box size, size = sqrt(gt box area): `lt32` (< 32 px), `32_64`, `64_128`, `ge128`.
+  These are COCO area ranges, so a box exactly on a bin edge counts in both. In a 640-px-wide input (3840 / 6)
+  they are < 5, 5–11, 11–21 and ≥ 21 px. Test target boxes per bin: 340, 1,323, 1,966, 1,490.
+- **Keys:** `<score>.<metric>` (whole split), `<score>.<cam>.<metric>`, `<score>.size_<bin>.<metric>`, with
+  metric = `AP`, `AP50`, `AP75`, `AR`, `n_gt`; plus `images`, `images_with_dets`, `dets`,
+  `moving_in_region.ignore_boxes`, `moving_in_region.dets_dropped_outside`. Numbers given with `--extra` (FPS, latency,
+  model size) are copied in. Score fp32 and the compiled HEF as two runs (e.g. `yolov9s_fp32`, `yolov9s_hef`).
+- **Checked** (`python -m pytest tests/test_det_eval.py`, test split):
+  - gt vs gt gives 1.0 for both scores, every camera and size bin (val and test);
+  - dropping 10% of the boxes gives AP 0.90 / AR 0.90 (`all`) and 0.89 / 0.90 (`moving_in_region`);
+  - shifting every box by 10% of its width (IoU 0.82) gives AP 0.70 with AP50 = AP75 = 1.0;
+  - 35 detections on the parked boxes inside the region (IoU 0.64), scored above every target, change nothing
+    (at IoU 0.36 they are false positives: AP 0.993);
+  - a detection outside the region on every image is dropped from `moving_in_region` and is a false positive in `all`.
 
 ## Swappable components
 
@@ -205,7 +365,7 @@ for training and scoring ReID models. Settings: `reid_split` and `seed` in `para
 
 | Agent | Owns |
 |---|---|
-| `data-eval` | `src/data/`, `src/evaluation/`, `src/visualization/`, `docs/licenses.md`, DVC stages `prepare` and `reid_split` |
+| `data-eval` | `src/data/`, `src/evaluation/`, `src/visualization/`, `docs/licenses.md`, DVC stages `prepare`, `reid_split`, `det_split`, `frames` and `calib` |
 | `detection` | `src/detection/`, `models/detection/`, DVC stage `detect` |
 | `tracking` | `src/tracking/`, DVC stage `track` |
 | `reid` | `src/reid/`, `models/reid/`, DVC stage `reid` |
@@ -276,4 +436,5 @@ each change must be reported. The old `process_data`, `train` and `eval` stages
   - **Multi_CAM ids are per trip, not per vehicle:** a vehicle that passes a camera twice gets two ids. Seen on the
     crops: black Silverado 666 / 685 (cam02), a liveried blue Nissan 691 / 10171 (cam01); an IMI concrete mixer 83 / 653 (cam03)
     is likely the same truck. The ReID file ids are per trip too. So one physical vehicle can have two `global_id`s;
-    the ReID split keeps such candidates together in train (`reports/figures/reid_check_repeat_visits.jpg`).
+    the ReID split keeps such candidates in one split group and scores at most the trip in the evaluation window
+    (685, 691 in test, 83 in val; 666, 10171 and 653 are excluded) (`reports/figures/reid_check_repeat_visits.jpg`).

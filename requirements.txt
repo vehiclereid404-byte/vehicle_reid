@@ -22,3 +22,7 @@ pillow
 matplotlib
 openpyxl
 jupyter
+
+# scoring (src/evaluation) and its tests
+pycocotools
+pytest

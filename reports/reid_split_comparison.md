@@ -4,6 +4,9 @@
   The format and protocol are in `docs/pipeline_contract.md` ("ReID split").
 - **Simon's:** `data/processed/reid/crops.csv`, built by `src/data/make_dataset.py`, DVC stage `process_data`.
 
+The comparison below is of our first, random version (commit ddd64ff). Our split now follows the detection time
+windows; see [Time-aligned version](#time-aligned-version) at the end.
+
 Both splits are ID-disjoint and drop byte-identical copies. Both put only multi-camera vehicles in val and test, use one query per
 vehicle and camera, and ignore same-ID, same-camera gallery crops. They differ in what counts as "one vehicle".
 
@@ -82,3 +85,48 @@ We share only 31 test vehicles. Both splits are random draws, so test scores fro
   - Decide whether to merge the confirmed repeat trips (666/685, 691/10171, probably 83/653) into one id, for matching and OD too.
 
 Reproduce: `dvc repro reid_split`, then `python -m src.visualization.reid_check` for the figures.
+
+## Time-aligned version
+
+**Why.** Step 3 fixed the detection time windows: val frames 1–1350, train 1801–6750, test 7201–9000, with 450-frame
+gaps. Tracking, matching and OD are scored on the test window. With the random split, 43 of the 76 multi-camera
+vehicles of the test window were ReID train vehicles. So end-to-end matching on the test window would have been
+scored partly on vehicles the ReID model was trained on. `reid_split` now follows the windows, so the whole project
+uses one split (`src/data/reid_split.py:assign_splits`, contract "ReID split").
+
+**Rules.**
+- **val and test:** the vehicles that qualify in that window: a Multi_CAM vehicle with crops in the window on 2+ cameras
+  and 2+ crops on one of them. They keep only that window's crops.
+- **train:** groups never seen in the val or test window (any gt track row). They keep all their crops, from the
+  train window and the gaps.
+- **excluded:** everything else (`split = excluded` in `crops.csv`):
+  - crops of val/test vehicles outside their window;
+  - the other vehicles of their group;
+  - groups seen in an evaluation window that can't be scored there (single-camera vehicles, and trips that cross a gap).
+- **Groups:** a group of possibly-same vehicles is split as one unit, and only its qualifying vehicles are scored.
+  - A group seen in both the val and the test window goes to test if it qualifies there, else to val, else it is excluded.
+  - 3 such groups: 509 and 629 go to test, and 682 (the BMW i3, the only single vehicle in both windows) goes to val.
+- **Unchanged:** identities and identity fixes, groups, dedup, one query per vehicle and camera, a cross-camera match
+  for every query, and same-vehicle, same-camera gallery crops ignored.
+
+| | random (above) | time-aligned |
+|---|---|---|
+| train: vehicles / crops | 366 / 39,417 | 225 / 27,798 (1,886 from the gaps) |
+| val: vehicles / queries / gallery | 39 / 105 / 6,953 | 40 / 80 / 4,895 |
+| test: vehicles / queries / gallery | 105 / 284 / 18,113 | 76 / 164 / 9,874 |
+| excluded crops | 0 | 22,061 (169 vehicles have none left) |
+| test-window multi-camera vehicles in ReID test | 24 of 76 (43 train, 9 val) | **76 of 76** |
+| val-window multi-camera vehicles in ReID val | – | 40 of 40 |
+| ReID train vehicles seen in the test window | 105 of 151 | **0** of 151 |
+| ReID train vehicles seen in the val window | 81 of 124 | **0** of 124 |
+| groups of possibly-same vehicles (33) | all in train | 13 test, 2 val, 9 train, 9 excluded; 16 of their vehicles scored |
+| repeat trips 666/685, 691/10171, 83/653 | all in train | 685 and 691 test, 83 val; 666, 10171 and 653 excluded |
+
+**Cost.**
+- Train loses 39% of its vehicles and 29% of its crops.
+- The test set has fewer cameras per vehicle (64 on 2 cameras, 12 on 3, none on 4; random: 56/24/25) and a gallery about
+  half the size. Scores on the two versions are not comparable.
+- A softer rule would put the train-window and gap crops of excluded groups back in train: +64 vehicles, +8,321 crops.
+  But those vehicles are seen in the val or test window, on one camera there, and the overlap check would no longer be 0.
+- The excluded test-window crops (3,109, mostly single-camera vehicles) could later serve as gallery distractors. That would
+  be a protocol change, not made here.
